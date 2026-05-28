@@ -1,0 +1,1829 @@
+from __future__ import annotations
+import argparse
+import math
+from pathlib import Path
+from typing import Any, Literal
+
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+
+WindTreatment = Literal["owned", "purchased", "free"]
+
+###############################################################################
+# STREAM AND EQUIPMENT DATA
+###############################################################################
+
+# Stream data. Entropy units are written as kJ/(kg*K); using °C in the denominator
+# is not conventional for entropy even though K and °C increments are equal.
+_STREAMS_RAW = [
+    {"stream": 1,  "T_C": -161.60, "P_kPa": 101.3,  "m_kg_s": 0.5,     "h_kJ_per_kg": -5579.07,  "s_kJ_per_kgK": 4.76},
+    {"stream": 2,  "T_C": -183.18, "P_kPa": 101.3,  "m_kg_s": 2.0,     "h_kJ_per_kg": -395.59,   "s_kJ_per_kgK": 1.13},
+    {"stream": 3,  "T_C": -144.88, "P_kPa": 30000,  "m_kg_s": 0.5,     "h_kJ_per_kg": -5484.95,  "s_kJ_per_kgK": 5.03},
+    {"stream": 4,  "T_C": -169.46, "P_kPa": 30000,  "m_kg_s": 2.0,     "h_kJ_per_kg": -360.82,   "s_kJ_per_kgK": 1.25},
+    {"stream": 5,  "T_C": -160.59, "P_kPa": 30000,  "m_kg_s": 2.5,     "h_kJ_per_kg": -1385.65,  "s_kJ_per_kgK": 2.21},
+    {"stream": 6,  "T_C": 38.07,   "P_kPa": 30000,  "m_kg_s": 31.24,   "h_kJ_per_kg": -8503.11,  "s_kJ_per_kgK": 2.56},
+    {"stream": 7,  "T_C": 500.0,   "P_kPa": 30000,  "m_kg_s": 31.24,   "h_kJ_per_kg": -7807.41,  "s_kJ_per_kgK": 3.99},
+    {"stream": 8,  "T_C": 1099.68, "P_kPa": 30000,  "m_kg_s": 31.24,   "h_kJ_per_kg": -7807.44,  "s_kJ_per_kgK": 4.77},
+    {"stream": 9,  "T_C": 733.0,   "P_kPa": 3000,   "m_kg_s": 31.24,   "h_kJ_per_kg": -8299.23,  "s_kJ_per_kgK": 4.83},
+    {"stream": 10, "T_C": 138.73,  "P_kPa": 3000,   "m_kg_s": 31.24,   "h_kJ_per_kg": -8994.92,  "s_kJ_per_kgK": 3.80},
+    {"stream": 11, "T_C": 25.0,    "P_kPa": 101.3,  "m_kg_s": 0.5,     "h_kJ_per_kg": -15865.80, "s_kJ_per_kgK": -9.06},
+    {"stream": 12, "T_C": 25.29,   "P_kPa": 3000,   "m_kg_s": 0.5,     "h_kJ_per_kg": -15861.92, "s_kJ_per_kgK": -9.06},
+    {"stream": 13, "T_C": 90.0,    "P_kPa": 3000,   "m_kg_s": 0.5,     "h_kJ_per_kg": -15591.88, "s_kJ_per_kgK": -8.24},
+    {"stream": 14, "T_C": 134.74,  "P_kPa": 3000,   "m_kg_s": 31.24,   "h_kJ_per_kg": -8999.25,  "s_kJ_per_kgK": 3.79},
+    {"stream": 15, "T_C": 30.0,    "P_kPa": 3000,   "m_kg_s": 0.06,    "h_kJ_per_kg": 77.59,     "s_kJ_per_kgK": -13.74},
+    {"stream": 16, "T_C": 30.0,    "P_kPa": 3000,   "m_kg_s": 0.44,    "h_kJ_per_kg": -2.28,     "s_kJ_per_kgK": -0.87},
+    {"stream": 17, "T_C": 50.0,    "P_kPa": 3000,   "m_kg_s": 31.24,   "h_kJ_per_kg": -9171.69,  "s_kJ_per_kgK": 3.32},
+    {"stream": 18, "T_C": 25.0,    "P_kPa": 101.3,  "m_kg_s": 20.74,   "h_kJ_per_kg": -15887.82, "s_kJ_per_kgK": 2.98},
+    {"stream": 19, "T_C": 85.0,    "P_kPa": 101.3,  "m_kg_s": 20.74,   "h_kJ_per_kg": -15628.02, "s_kJ_per_kgK": 3.77},
+    {"stream": 20, "T_C": 50.0,    "P_kPa": 3000,   "m_kg_s": 30.11,   "h_kJ_per_kg": -8928.97,  "s_kJ_per_kgK": 3.32},
+    {"stream": 21, "T_C": 50.0,    "P_kPa": 3000,   "m_kg_s": 1.13,    "h_kJ_per_kg": -15645.52, "s_kJ_per_kgK": 3.33},
+    {"stream": 22, "T_C": 211.78,  "P_kPa": 16000,  "m_kg_s": 30.11,   "h_kJ_per_kg": -8808.26,  "s_kJ_per_kgK": 3.34},
+    {"stream": 23, "T_C": 40.0,    "P_kPa": 16000,  "m_kg_s": 30.11,   "h_kJ_per_kg": -9149.41,  "s_kJ_per_kgK": 2.44},
+    {"stream": 24, "T_C": 60.90,   "P_kPa": 30000,  "m_kg_s": 30.11,   "h_kJ_per_kg": -9125.21,  "s_kJ_per_kgK": 2.46},
+    {"stream": 25, "T_C": 60.90,   "P_kPa": 30000,  "m_kg_s": 0.40,    "h_kJ_per_kg": -9125.21,  "s_kJ_per_kgK": 2.46},
+    {"stream": 26, "T_C": 60.90,   "P_kPa": 30000,  "m_kg_s": 29.71,   "h_kJ_per_kg": -9125.21,  "s_kJ_per_kgK": 2.46},
+    {"stream": 27, "T_C": -34.38,  "P_kPa": 3000,   "m_kg_s": 0.46,    "h_kJ_per_kg": -7999.32,  "s_kJ_per_kgK": 8.42},
+    {"stream": 28, "T_C": -4.94,   "P_kPa": 3000,   "m_kg_s": 0.40,    "h_kJ_per_kg": -9125.21,  "s_kJ_per_kgK": 2.61},
+    {"stream": 29, "T_C": -34.38,  "P_kPa": 3000,   "m_kg_s": 0.23,    "h_kJ_per_kg": -7992.01,  "s_kJ_per_kgK": 8.43},
+    {"stream": 30, "T_C": -34.38,  "P_kPa": 3000,   "m_kg_s": 0.23,    "h_kJ_per_kg": -7992.01,  "s_kJ_per_kgK": 8.43},
+    {"stream": 31, "T_C": -40.31,  "P_kPa": 2.0,    "m_kg_s": 0.23,    "h_kJ_per_kg": -7992.01,  "s_kJ_per_kgK": 13.34},
+    {"stream": 32, "T_C": 50.0,    "P_kPa": 2.0,    "m_kg_s": 0.23,    "h_kJ_per_kg": -7768.41,  "s_kJ_per_kgK": 14.15},
+    {"stream": 33, "T_C": 100.0,   "P_kPa": 2.0,    "m_kg_s": 0.23,    "h_kJ_per_kg": -6975.65,  "s_kJ_per_kgK": 15.47},
+    {"stream": 34, "T_C": 8.23,    "P_kPa": 2.0,    "m_kg_s": 0.23,    "h_kJ_per_kg": -7199.25,  "s_kJ_per_kgK": 14.78},
+    {"stream": 35, "T_C": 581.60,  "P_kPa": 100.0,  "m_kg_s": 0.23,    "h_kJ_per_kg": -5737.81,  "s_kJ_per_kgK": 14.96},
+    {"stream": 36, "T_C": 8.23,    "P_kPa": 2.0,    "m_kg_s": 0.23,    "h_kJ_per_kg": -7199.25,  "s_kJ_per_kgK": 14.78},
+    {"stream": 37, "T_C": 8.23,    "P_kPa": 2.0,    "m_kg_s": 0.0,     "h_kJ_per_kg": -15921.20, "s_kJ_per_kgK": 2.84},
+    {"stream": 38, "T_C": 40.0,    "P_kPa": 100.0,  "m_kg_s": 0.23,    "h_kJ_per_kg": -7601.86,  "s_kJ_per_kgK": 10.94},
+    {"stream": 39, "T_C": 40.0,    "P_kPa": 100.0,  "m_kg_s": 0.18,    "h_kJ_per_kg": -5553.74,  "s_kJ_per_kgK": 12.85},
+    {"stream": 40, "T_C": 40.0,    "P_kPa": 100.0,  "m_kg_s": 0.05,    "h_kJ_per_kg": -15792.68, "s_kJ_per_kgK": 3.28},
+    {"stream": 41, "T_C": 25.24,   "P_kPa": 3000,   "m_kg_s": 0.88,    "h_kJ_per_kg": -6317.99,  "s_kJ_per_kgK": 11.50},
+    {"stream": 42, "T_C": 568.91,  "P_kPa": 3000,   "m_kg_s": 0.18,    "h_kJ_per_kg": -4129.95,  "s_kJ_per_kgK": 13.03},
+    {"stream": 43, "T_C": 45.0,    "P_kPa": 3000,   "m_kg_s": 0.18,    "h_kJ_per_kg": -5808.01,  "s_kJ_per_kgK": 9.70},
+    {"stream": 44, "T_C": 45.0,    "P_kPa": 3000,   "m_kg_s": 0.16,    "h_kJ_per_kg": -4535.13,  "s_kJ_per_kgK": 10.51},
+    {"stream": 45, "T_C": 45.0,    "P_kPa": 3000,   "m_kg_s": 0.02,    "h_kJ_per_kg": -15768.21, "s_kJ_per_kgK": 3.34},
+    {"stream": 46, "T_C": 180.0,   "P_kPa": 3000,   "m_kg_s": 0.88,    "h_kJ_per_kg": -5808.19,  "s_kJ_per_kgK": 12.89},
+    {"stream": 47, "T_C": 265.0,   "P_kPa": 3000,   "m_kg_s": 0.88,    "h_kJ_per_kg": -6294.77,  "s_kJ_per_kgK": 11.45},
+    {"stream": 48, "T_C": 127.95,  "P_kPa": 3000,   "m_kg_s": 0.88,    "h_kJ_per_kg": -6804.57,  "s_kJ_per_kgK": 10.32},
+    {"stream": 49, "T_C": 35.0,    "P_kPa": 3000,   "m_kg_s": 0.88,    "h_kJ_per_kg": -7681.22,  "s_kJ_per_kgK": 7.90},
+    {"stream": 50, "T_C": 35.0,    "P_kPa": 3000,   "m_kg_s": 0.50,    "h_kJ_per_kg": -6105.43,  "s_kJ_per_kgK": 13.15},
+    {"stream": 51, "T_C": 35.0,    "P_kPa": 3000,   "m_kg_s": 0.38,    "h_kJ_per_kg": -9753.77,  "s_kJ_per_kgK": 0.99},
+    {"stream": 52, "T_C": 35.0,    "P_kPa": 3000,   "m_kg_s": 0.49,    "h_kJ_per_kg": -6105.43,  "s_kJ_per_kgK": 13.15},
+    {"stream": 53, "T_C": 35.0,    "P_kPa": 3000,   "m_kg_s": 0.01,    "h_kJ_per_kg": -6105.43,  "s_kJ_per_kgK": 13.15},
+    {"stream": 54, "T_C": 35.22,   "P_kPa": 120.0,  "m_kg_s": 0.38,    "h_kJ_per_kg": -9753.77,  "s_kJ_per_kgK": 1.01},
+    {"stream": 55, "T_C": 67.20,   "P_kPa": 120.0,  "m_kg_s": 0.02,    "h_kJ_per_kg": -6837.70,  "s_kJ_per_kgK": 4.43},
+    {"stream": 56, "T_C": 67.20,   "P_kPa": 120.0,  "m_kg_s": 0.27,    "h_kJ_per_kg": -7507.18,  "s_kJ_per_kgK": 0.69},
+    {"stream": 57, "T_C": 104.58,  "P_kPa": 120.0,  "m_kg_s": 0.09,    "h_kJ_per_kg": -15516.10, "s_kJ_per_kgK": 4.03},
+    {"stream": 58, "T_C": 45.0,    "P_kPa": 3000,   "m_kg_s": 0.16,    "h_kJ_per_kg": -4516.87,  "s_kJ_per_kgK": 10.50},
+]
+STREAMS: pd.DataFrame = pd.DataFrame(_STREAMS_RAW).set_index("stream")
+
+_PUMPS_RAW = [
+    {"component": "P-100", "adiabatic_efficiency_percent": 85.0, "W_kW": 47.0,  "delta_P_kPa": 29900.0, "m_fluid_kg_s": 0.5,   "p_out_kPa": 30000.0},
+    {"component": "P-101", "adiabatic_efficiency_percent": 85.0, "W_kW": 69.54, "delta_P_kPa": 29900.0, "m_fluid_kg_s": 2.0,   "p_out_kPa": 30000.0},
+    {"component": "P-102", "adiabatic_efficiency_percent": 85.0, "W_kW": 1.94,  "delta_P_kPa": 2899.0,  "m_fluid_kg_s": 0.5,   "p_out_kPa": 3000.0},
+    {"component": "P-103", "adiabatic_efficiency_percent": 85.0, "W_kW": 729.0, "delta_P_kPa": 14000.0, "m_fluid_kg_s": 30.11, "p_out_kPa": 30000.0},
+]
+PUMPS: pd.DataFrame = pd.DataFrame(_PUMPS_RAW).set_index("component")
+
+_HEAT_EXCHANGERS_RAW = [
+    {"component": "E-100", "LMTD_C": 154.0,  "Q_kW": 21733.33, "min_approach_C": 100.6, "m_cold_kg_s": 31.24, "m_hot_kg_s": 31.24},
+    {"component": "E-101", "LMTD_C": 74.45,  "Q_kW": 135.14,   "min_approach_C": 48.7,  "m_cold_kg_s": 0.5,   "m_hot_kg_s": 31.24},
+    {"component": "E-102", "LMTD_C": 28.94,  "Q_kW": 5386.11,  "min_approach_C": 25.0,  "m_cold_kg_s": 20.74, "m_hot_kg_s": 31.24},
+    {"component": "E-103", "LMTD_C": None,   "Q_kW": None,     "min_approach_C": None,  "m_cold_kg_s": None,  "m_hot_kg_s": None},
+    {"component": "E-104", "LMTD_C": 48.98,  "Q_kW": 51.14,    "min_approach_C": 48.5,  "m_cold_kg_s": 0.23,  "m_hot_kg_s": 0.23},
+    {"component": "E-105", "LMTD_C": 89.22,  "Q_kW": 449.17,   "min_approach_C": 85.0,  "m_cold_kg_s": 0.88,  "m_hot_kg_s": 0.88},
+]
+HEAT_EXCHANGERS: pd.DataFrame = pd.DataFrame(_HEAT_EXCHANGERS_RAW).set_index("component")
+
+_TURBINES_RAW = [
+    {"component": "T-100", "adiabatic_efficiency_percent": 85.0, "W_kW": 15360.0, "p_in_kPa": 30000.0, "m_in_kg_s": 31.24, "p_out_kPa": 3000.0},
+]
+TURBINES: pd.DataFrame = pd.DataFrame(_TURBINES_RAW).set_index("component")
+
+_COMPRESSORS_RAW = [
+    {"component": "K-100",                "adiabatic_efficiency_percent": 85.0, "W_kW": 3635.0, "p_in_kPa": 3000.0, "m_in_kg_s": 30.11, "p_out_kPa": 16000.0},
+    {"component": "4-stage compressor 1", "adiabatic_efficiency_percent": 85.0, "W_kW": 334.2,  "p_in_kPa": 2.0,    "m_in_kg_s": 0.23,  "p_out_kPa": 100.0},
+    {"component": "4-stage compressor 2", "adiabatic_efficiency_percent": 85.0, "W_kW": 260.5,  "p_in_kPa": 100.0,  "m_in_kg_s": 0.1829,"p_out_kPa": 3000.0},
+]
+COMPRESSORS: pd.DataFrame = pd.DataFrame(_COMPRESSORS_RAW).set_index("component")
+
+###############################################################################
+# ECONOMIC AND PROCESS ASSUMPTIONS
+###############################################################################
+
+SYSTEM_LIFETIME_YEARS: int = 20
+DISCOUNT_RATE: float = 0.05
+OPERATING_HOURS_PER_YEAR: int = 7_446
+
+# ---------------------------------------------------------------------------
+# Price assumptions used for the Denmark-oriented TEA baseline.
+# Sources are documented here because these constants materially affect the
+# economic results.  Retrieval date for district-heating and FX data: 2026-05-03.
+#
+# Methanol product price:
+#   User/paper price retained by request: EUR 1,800 per metric ton.
+#   This is intentionally NOT replaced with the current Methanex posted price.
+#
+# District-heating product price:
+#   Danish Utility Regulator (Forsyningstilsynet), January 2026 district-heating
+#   price statistics: weighted average price = DKK 16,953 per year for a
+#   130 m² standard house with annual heat consumption of 18.1 MWh.
+#   Converted here to DKK/MWh, DKK/GJ, and USD/GJ for hot-water revenue.
+#   Source: https://forsyningstilsynet.dk/analyser-og-tal/forbrugerpriser/fjernvarmepriser
+#
+# Currency conversion:
+#   European Central Bank reference rates for 2026-04-30:
+#   EUR 1 = USD 1.1702 and EUR 1 = DKK 7.4716.
+#   Source: https://www.ecb.europa.eu/stats/policy_and_exchange_rates/euro_reference_exchange_rates/html/index.en.html
+#
+# Optional gas-price reference, not used by default because the original paper
+# used a fixed LNG fuel-cost assumption.  European TTF gas on 2026-05-01 was
+# EUR 45.41/MWh, equivalent to about USD 14.76/GJ using the ECB FX rate above.
+#   Source: https://tradingeconomics.com/commodity/eu-natural-gas
+# ---------------------------------------------------------------------------
+EUR_TO_USD: float = 1.1702
+DKK_PER_EUR: float = 7.4716
+DKK_PER_USD: float = DKK_PER_EUR / EUR_TO_USD
+USD_PER_DKK: float = 1.0 / DKK_PER_USD
+
+METHANOL_PRICE_SCENARIO: str = "european_posted_contract_retained_1800_eur_t"
+METHANOL_PRICE_PER_TON_EUR: float = 1800.0
+METHANOL_PRICE_PER_TON_USD: float = METHANOL_PRICE_PER_TON_EUR * EUR_TO_USD
+# Scenario only, not the default: estimated regulatory/shipping value of e-methanol
+# from Methanol Institute analysis, average maximum price for 2025-2033.
+# Source: https://methanol.org/wp-content/uploads/2024/09/ECONOMIC-VALUE-OF-METHANOL-FOR-SHIPPING-PAPER_final.pdf
+E_METHANOL_VALUE_SCENARIO_EUR_PER_TON: float = 2_238.0
+E_METHANOL_VALUE_SCENARIO_USD_PER_TON: float = E_METHANOL_VALUE_SCENARIO_EUR_PER_TON * EUR_TO_USD
+
+DENMARK_DH_STANDARD_HOUSE_PRICE_DKK_PER_YEAR_2026: float = 16_953.0
+DENMARK_DH_STANDARD_HOUSE_HEAT_MWH_PER_YEAR_2026: float = 18.1
+# Updated Denmark district-heating / hot-water price from Forsyningstilsynet
+# January 2026 weighted-average price statistics for a 130 m² standard house.
+# This replaces the fixed paper/user value of 25.5 USD/GJ.
+HOT_WATER_PRICE_PER_MWH_DKK: float = (
+    DENMARK_DH_STANDARD_HOUSE_PRICE_DKK_PER_YEAR_2026
+    / DENMARK_DH_STANDARD_HOUSE_HEAT_MWH_PER_YEAR_2026
+)
+HOT_WATER_PRICE_PER_GJ_DKK: float = HOT_WATER_PRICE_PER_MWH_DKK / 3.6
+HOT_WATER_PRICE_PER_GJ: float = HOT_WATER_PRICE_PER_GJ_DKK / DKK_PER_USD
+
+# Paper input-cost assumptions retained for base-case compatibility unless the
+# user deliberately replaces them.  These are costs, not product prices.
+LNG_COST_PER_GJ: float = 7.78
+CURRENT_EU_TTF_GAS_COST_USD_PER_GJ: float = 45.41 / 3.6 * EUR_TO_USD
+ELECTRICITY_COST_PER_KWH: float = 0.045
+O_AND_M_FACTOR: float = 0.06
+O_AND_M_BASIS: Literal["FCI", "PEC"] = "PEC"
+
+# Molecular weights used for oxygen/RWGS/methanol stream calculations.
+MW_CO2_KG_PER_KMOL: float = 44.0095
+MW_H2_KG_PER_KMOL: float = 2.01588
+MW_METHANOL_KG_PER_KMOL: float = 32.04186
+
+# Oxygen and LOX accounting.  The stream table gives 2.00 kg/s O2 entering
+# the Allam combustor (Stream 2) and 0.44 kg/s O2 produced by the PEM electrolyzer
+# (Stream 16).  The corrected purchased-LOX requirement is therefore 1.56 kg/s.
+ACC_OXYGEN_TO_COMBUSTOR_KG_S: float = float(STREAMS.loc[2, "m_kg_s"])
+PEM_OXYGEN_BYPRODUCT_KG_S: float = float(STREAMS.loc[16, "m_kg_s"])
+LOX_MASS_FLOW_KG_S: float = ACC_OXYGEN_TO_COMBUSTOR_KG_S - PEM_OXYGEN_BYPRODUCT_KG_S
+if not math.isclose(LOX_MASS_FLOW_KG_S, 1.56, rel_tol=0.0, abs_tol=1e-9):
+    raise ValueError(f"Expected corrected purchased LOX = 1.56 kg/s, got {LOX_MASS_FLOW_KG_S}")
+LOX_PRICE_PER_TON_EUR: float = 120.0
+LOX_PRICE_PER_TON_USD: float = LOX_PRICE_PER_TON_EUR * EUR_TO_USD
+
+# Methanol lower heating value basis and baseline product data.
+METHANOL_LHV_KJ_PER_KG: float = 19_900.0
+BASELINE_METHANOL_MASS_KG_S: float = float(STREAMS.loc[56, "m_kg_s"])
+# The paper's performance table reports 5,328 kW; the LHV-based value from
+# 0.27 kg/s and 19.9 MJ/kg is 5,373 kW.  The table value is retained for
+# baseline comparability, while the LHV equation is used for non-baseline cases.
+BASELINE_METHANOL_ENERGY_KW: float = 5_328.0
+# Use the same methanol energy basis for sensitivity cases.  This makes the
+# reported baseline mass flow of 0.27 kg/s exactly correspond to the paper's
+# reported methanol energy of 5,328 kW.
+METHANOL_TABLE_ENERGY_KJ_PER_KG: float = BASELINE_METHANOL_ENERGY_KW / BASELINE_METHANOL_MASS_KG_S
+
+
+def methanol_product_energy_kw_from_mass(methanol_mass_kg_s: float) -> float:
+    """Return methanol product energy on the paper/table basis.
+
+    The original LHV value (19,900 kJ/kg) is kept above as a reference, but the
+    TEA denominator and sensitivity results use the paper's own reported energy
+    basis: 0.27 kg/s methanol -> 5,328 kW.
+    """
+    return float(methanol_mass_kg_s) * METHANOL_TABLE_ENERGY_KJ_PER_KG
+
+
+# Heating power generation in the system used as the marketable hot-water /
+# district-heating load for revenue and LCP calculations.
+# User-specified correction: 5,387 kW.
+BASELINE_HOT_WATER_MASS_KG_S: float = float(STREAMS.loc[18, "m_kg_s"])
+STREAMS_18_TO_19_HOT_WATER_LOAD_KW: float = BASELINE_HOT_WATER_MASS_KG_S * (
+    float(STREAMS.loc[19, "h_kJ_per_kg"]) - float(STREAMS.loc[18, "h_kJ_per_kg"])
+)
+BASELINE_HEATING_LOAD_KW: float = 5_387.0
+# Corrected product basis used in the sensitivity LCP calculations.  The old
+# Aspen hot-water sensitivity values (~18-21 MW) are retained only as diagnostic
+# input data; they are no longer used in the LCP denominator.
+SENSITIVITY_DISTRICT_HEATING_KW: float = BASELINE_HEATING_LOAD_KW
+SENSITIVITY_PRODUCT_BASIS_DESCRIPTION: str = (
+    "corrected product basis: district heating = 5,387 kW; "
+    "methanol energy uses the paper/table basis from Stream 56, where 0.27 kg/s = 5,328 kW"
+)
+
+# Guardrails for the corrected basis requested for this paper revision.
+if not math.isclose(BASELINE_HEATING_LOAD_KW, 5_387.0, rel_tol=0.0, abs_tol=1e-9):
+    raise ValueError(f"Expected baseline district-heating load = 5,387 kW, got {BASELINE_HEATING_LOAD_KW}")
+if not math.isclose(BASELINE_METHANOL_ENERGY_KW, 5_328.0, rel_tol=0.0, abs_tol=1e-9):
+    raise ValueError(f"Expected baseline methanol energy = 5,328 kW, got {BASELINE_METHANOL_ENERGY_KW}")
+if not math.isclose(METHANOL_PRICE_PER_TON_EUR, 1_800.0, rel_tol=0.0, abs_tol=1e-9):
+    raise ValueError(f"Expected retained methanol price = 1,800 EUR/t, got {METHANOL_PRICE_PER_TON_EUR}")
+# Internal heat recovery is useful thermodynamically but is not counted as sold
+# hot water unless the user explicitly overrides heating_load_kw.
+E103_INTERNAL_HEAT_RECOVERY_KW_FROM_STREAMS: float = float(STREAMS.loc[22, "m_kg_s"]) * (
+    float(STREAMS.loc[23, "h_kJ_per_kg"]) - float(STREAMS.loc[22, "h_kJ_per_kg"])
+)
+E103_INTERNAL_HEAT_RECOVERY_KW_ABS: float = abs(E103_INTERNAL_HEAT_RECOVERY_KW_FROM_STREAMS)
+
+BASELINE_LNG_POWER_KW: float = 25_020.0
+BASELINE_WIND_POWER_KW: float = 1_476.0
+# Default to the reported wind electric power.  Override with --wind-rated-kw if
+# you want a larger installed/rated turbine capacity for capacity-factor reasons.
+BASELINE_WIND_TURBINE_RATED_POWER_KW: float = BASELINE_WIND_POWER_KW
+PEM_ELECTROLYZER_BASE_POWER_KW: float = 11_580.0
+RWGS_BASE_POWER_KW: float = 181.0
+
+# Scale RWGS plasma reactor tubes from the stream-based feed flow.  The manuscript
+# text says 240 tubes for a feed flow of 100 kmol/h.  The base RWGS branch is half
+# of the mixed H2+CO2 stream: Stream 30/31 = 0.23 kg/s from Stream 27 = 0.46 kg/s.
+BASE_TOTAL_H2_KMOL_H: float = float(STREAMS.loc[15, "m_kg_s"]) * 3600.0 / MW_H2_KG_PER_KMOL
+BASE_TOTAL_CO2_KMOL_H: float = float(STREAMS.loc[28, "m_kg_s"]) * 3600.0 / MW_CO2_KG_PER_KMOL
+RWGS_SPLIT_FRACTION: float = float(STREAMS.loc[31, "m_kg_s"]) / float(STREAMS.loc[27, "m_kg_s"])
+RWGS_BASE_FEED_KMOL_H: float = (BASE_TOTAL_H2_KMOL_H + BASE_TOTAL_CO2_KMOL_H) * RWGS_SPLIT_FRACTION
+RWGS_REFERENCE_FEED_KMOL_H: float = 100.0
+RWGS_REFERENCE_TUBES: int = 240
+RWGS_BASE_TUBES: int = max(1, math.ceil(RWGS_REFERENCE_TUBES * RWGS_BASE_FEED_KMOL_H / RWGS_REFERENCE_FEED_KMOL_H))
+
+# E-103 is absent from the equipment table, so these are explicit design assumptions.
+E103_ASSUMED_LMTD_C: float = 70.0
+
+# Overall heat-transfer coefficient used where detailed equipment design is absent.
+# Users should replace this with component-specific U values from equipment design.
+DEFAULT_HEAT_EXCHANGER_U_KW_PER_M2K: float = 0.25
+HEAT_EXCHANGER_U_KW_PER_M2K: dict[str, float] = {
+    "E-100": DEFAULT_HEAT_EXCHANGER_U_KW_PER_M2K,
+    "E-101": DEFAULT_HEAT_EXCHANGER_U_KW_PER_M2K,
+    "E-102": DEFAULT_HEAT_EXCHANGER_U_KW_PER_M2K,
+    "E-103": DEFAULT_HEAT_EXCHANGER_U_KW_PER_M2K,
+    "E-104": DEFAULT_HEAT_EXCHANGER_U_KW_PER_M2K,
+    "E-105": DEFAULT_HEAT_EXCHANGER_U_KW_PER_M2K,
+}
+
+# The original draft costed every heat exchanger with a nominal 100 m² area.
+# That is not supported by the stream/equipment tables.  The corrected default
+# is to derive area from Q/(U*LMTD).  Set this True only to reproduce the old draft.
+USE_PAPER_FIXED_BASELINE_EXCHANGER_AREA: bool = False
+PAPER_FIXED_HEAT_EXCHANGER_AREA_M2: float = 100.0
+
+PRICE_REFERENCES: dict[str, dict[str, str | float]] = {
+    "methanol_product": {
+        "value": METHANOL_PRICE_PER_TON_EUR,
+        "unit": "EUR per metric ton",
+        "basis": "User/paper retained value; kept at 1,800 EUR/t by request",
+        "source": "user/paper assumption",
+    },
+    "district_heating_product": {
+        "value": HOT_WATER_PRICE_PER_GJ,
+        "unit": "USD per GJ",
+        "basis": "Forsyningstilsynet January 2026 weighted-average district-heating price for a 130 m² standard house, converted from DKK/year and 18.1 MWh/year to USD/GJ",
+        "source": "https://forsyningstilsynet.dk/analyser-og-tal/forbrugerpriser/fjernvarmepriser",
+    },
+    "e_methanol_value_scenario": {
+        "value": E_METHANOL_VALUE_SCENARIO_EUR_PER_TON,
+        "unit": "EUR per metric ton",
+        "basis": "Methanol Institute/FuelEU Maritime economic-value scenario for e-methanol, 2025-2033; not used as default",
+        "source": "https://methanol.org/wp-content/uploads/2024/09/ECONOMIC-VALUE-OF-METHANOL-FOR-SHIPPING-PAPER_final.pdf",
+    },
+    "currency": {
+        "EUR_TO_USD": EUR_TO_USD,
+        "DKK_PER_EUR": DKK_PER_EUR,
+        "basis": "ECB reference rates, 2026-04-30",
+        "source": "https://www.ecb.europa.eu/stats/policy_and_exchange_rates/euro_reference_exchange_rates/html/index.en.html",
+    },
+    "lng_cost_paper_assumption": {
+        "value": LNG_COST_PER_GJ,
+        "unit": "USD per GJ",
+        "basis": "Original paper assumption retained; current TTF reference also stored in CURRENT_EU_TTF_GAS_COST_USD_PER_GJ",
+        "source": "paper economic assumptions",
+    },
+}
+
+
+###############################################################################
+# VALIDATION AND UTILITY FUNCTIONS
+###############################################################################
+
+def _require_finite(name: str, value: float) -> float:
+    value = float(value)
+    if not math.isfinite(value):
+        raise ValueError(f"{name} must be finite; got {value!r}")
+    return value
+
+
+def _require_positive(name: str, value: float, *, allow_zero: bool = False) -> float:
+    value = _require_finite(name, value)
+    if allow_zero:
+        if value < 0:
+            raise ValueError(f"{name} must be non-negative; got {value}")
+    elif value <= 0:
+        raise ValueError(f"{name} must be positive; got {value}")
+    return value
+
+
+def format_money(value: float) -> str:
+    return "inf" if math.isinf(value) else f"${value:,.0f}"
+
+
+def format_number(value: float, digits: int = 2) -> str:
+    return "inf" if math.isinf(value) else f"{value:,.{digits}f}"
+
+
+def escalate_cost(cost_ref: float, cepci_current: float, cepci_ref: float) -> float:
+    """Escalate a historical equipment cost with CEPCI-style index ratio."""
+    cost_ref = _require_positive("cost_ref", cost_ref, allow_zero=True)
+    cepci_current = _require_positive("cepci_current", cepci_current)
+    cepci_ref = _require_positive("cepci_ref", cepci_ref)
+    return cost_ref * cepci_current / cepci_ref
+
+###############################################################################
+# COST CORRELATION FUNCTIONS
+###############################################################################
+
+def cost_pump(power_kW: float) -> float:
+    power_kW = _require_positive("pump power_kW", power_kW)
+    return 900.0 * (power_kW / 300.0) ** 0.25
+
+
+def cost_gas_turbine(power_kW: float) -> float:
+    power_kW = _require_positive("gas turbine power_kW", power_kW)
+    return 866.64 * power_kW ** 0.82
+
+
+def cost_turbine(power_kW: float) -> float:
+    power_kW = _require_positive("turbine power_kW", power_kW)
+    return 6000.0 * power_kW ** 0.7
+
+
+def cost_exchanger(area_m2: float) -> float:
+    area_m2 = _require_positive("heat exchanger area_m2", area_m2)
+    return 130.0 * (area_m2 / 0.093) ** 0.78
+
+
+def cost_wind_turbine(power_MW: float) -> float:
+    """Wind turbine purchase cost using Supplementary Part B fit.
+
+    C = 2.12 * P^0.57 million USD, where P is rated power in MW.
+    """
+    power_MW = _require_positive("wind turbine power_MW", power_MW, allow_zero=True)
+    if power_MW == 0:
+        return 0.0
+    return 2.12 * power_MW ** 0.57 * 1_000_000.0
+
+
+def cost_compressor(power_kW: float) -> float:
+    power_kW = _require_positive("compressor power_kW", power_kW)
+    return 9_624.2 * power_kW ** 0.46
+
+
+def cost_combustion_chamber(
+    m_in_kg_s: float,
+    p_in_kPa: float,
+    p_out_kPa: float,
+    T_out_C: float,
+) -> float:
+    m_in_kg_s = _require_positive("combustion chamber m_in_kg_s", m_in_kg_s)
+    p_in_kPa = _require_positive("combustion chamber p_in_kPa", p_in_kPa)
+    p_out_kPa = _require_positive("combustion chamber p_out_kPa", p_out_kPa)
+    T_out_C = _require_finite("combustion chamber T_out_C", T_out_C)
+
+    pressure_ratio_term = 0.995 - (p_out_kPa / p_in_kPa)
+    if pressure_ratio_term <= 0:
+        raise ValueError(
+            "Combustion-chamber pressure term must be positive: "
+            f"0.995 - p_out/p_in = {pressure_ratio_term:.6g}"
+        )
+
+    T_out_K = T_out_C + 273.15
+    return 46.08 * (m_in_kg_s / pressure_ratio_term) * (
+        1.0 + math.exp(0.018 * T_out_K - 26.4)
+    )
+
+
+def cost_methanol_unit(m_gas_in_kg_s: float) -> float:
+    m_gas_in_kg_s = _require_positive("methanol unit gas feed m_gas_in_kg_s", m_gas_in_kg_s)
+    m_gas_in_kg_h = m_gas_in_kg_s * 3600.0
+    return 20_400.0 * m_gas_in_kg_h ** 0.65
+
+
+def cost_rwgs_plasma_ntp(
+    n_tubes: int,
+    power_kW: float,
+    euro_per_tube: float = 1_000.0,
+) -> float:
+    """Paper-aligned purchase cost for the RWGS non-thermal plasma reactor.
+
+    This intentionally preserves the Supplementary Part C expression:
+    vessel cost = n_tubes * euro_per_tube**0.6 * EUR_TO_USD
+    power supply cost = 1500 * power_kW + 900
+    """
+    if not isinstance(n_tubes, int) or n_tubes <= 0:
+        raise ValueError(f"n_tubes must be a positive integer; got {n_tubes!r}")
+    power_kW = _require_positive("RWGS plasma power_kW", power_kW)
+    euro_per_tube = _require_positive("euro_per_tube", euro_per_tube)
+
+    vessel_cost_usd = n_tubes * (euro_per_tube ** 0.6) * EUR_TO_USD
+    power_supply_cost_usd = 1_500.0 * power_kW + 900.0
+    return vessel_cost_usd + power_supply_cost_usd
+
+
+def cost_pem_electrolyzer(power_kW: float) -> float:
+    power_kW = _require_positive("PEM electrolyzer power_kW", power_kW)
+    return 1_000.0 * power_kW
+
+###############################################################################
+# CAPITAL INVESTMENT AND ANNUAL COST FUNCTIONS
+###############################################################################
+
+def calculate_direct_costs(purchased_equipment_cost: float) -> float:
+    """Direct capital cost from the economic-method table.
+
+    Corrected interpretation of the table rows:
+    purchased equipment = 100%; installation = 10%; piping = 70%;
+    instrumentation/controls = 40%; electrical = 15%; land = 10%;
+    civil/structural/architectural = 90%; service facilities = 100%.
+
+    The old draft omitted land and service facilities and used 35% instead of
+    40% for instrumentation.  That old convention can be reproduced only by
+    editing these factors intentionally.
+    """
+    purchased_equipment_cost = _require_positive(
+        "purchased_equipment_cost", purchased_equipment_cost, allow_zero=True
+    )
+    factors = {
+        "installation": 0.10,
+        "piping": 0.70,
+        "instrumentation_and_controls": 0.40,
+        "electrical_equipment_and_materials": 0.15,
+        "land": 0.10,
+        "civil_structural_architectural": 0.90,
+        "service_facilities": 1.00,
+    }
+    return purchased_equipment_cost * (1.0 + sum(factors.values()))
+
+
+def calculate_indirect_costs(purchased_equipment_cost: float, direct_costs: float) -> float:
+    purchased_equipment_cost = _require_positive(
+        "purchased_equipment_cost", purchased_equipment_cost, allow_zero=True
+    )
+    direct_costs = _require_positive("direct_costs", direct_costs, allow_zero=True)
+    engineering_supervision = 0.25 * purchased_equipment_cost
+    construction_costs = 0.15 * direct_costs
+    contingencies = 0.15 * (engineering_supervision + construction_costs)
+    return engineering_supervision + construction_costs + contingencies
+
+
+def calculate_fci(purchased_equipment_cost: float) -> tuple[float, float, float]:
+    direct = calculate_direct_costs(purchased_equipment_cost)
+    indirect = calculate_indirect_costs(purchased_equipment_cost, direct)
+    return direct, indirect, direct + indirect
+
+
+def capital_recovery_factor(
+    discount_rate: float = DISCOUNT_RATE,
+    lifetime_years: int = SYSTEM_LIFETIME_YEARS,
+) -> float:
+    discount_rate = _require_finite("discount_rate", discount_rate)
+    if lifetime_years <= 0:
+        raise ValueError("lifetime_years must be positive")
+    if discount_rate < 0:
+        raise ValueError("discount_rate cannot be negative")
+    if discount_rate == 0:
+        return 1.0 / lifetime_years
+    factor = (1.0 + discount_rate) ** lifetime_years
+    return discount_rate * factor / (factor - 1.0)
+
+
+def calculate_o_and_m_cost(cost_basis: float, factor: float = O_AND_M_FACTOR) -> float:
+    cost_basis = _require_positive("O&M cost_basis", cost_basis, allow_zero=True)
+    factor = _require_positive("O&M factor", factor, allow_zero=True)
+    return factor * cost_basis
+
+
+def calculate_lng_fuel_cost(
+    lng_power_kw: float,
+    hours: int = OPERATING_HOURS_PER_YEAR,
+    lng_cost_per_gj: float = LNG_COST_PER_GJ,
+) -> float:
+    lng_power_kw = _require_positive("lng_power_kw", lng_power_kw, allow_zero=True)
+    if hours < 0:
+        raise ValueError("hours cannot be negative")
+    lng_cost_per_gj = _require_positive("lng_cost_per_gj", lng_cost_per_gj, allow_zero=True)
+    lng_energy_gj = lng_power_kw * hours * 0.0036
+    return lng_energy_gj * lng_cost_per_gj
+
+
+def calculate_purchased_electricity_cost(
+    electricity_power_kw: float,
+    hours: int = OPERATING_HOURS_PER_YEAR,
+    electricity_cost_per_kwh: float = ELECTRICITY_COST_PER_KWH,
+) -> float:
+    electricity_power_kw = _require_positive("electricity_power_kw", electricity_power_kw, allow_zero=True)
+    if hours < 0:
+        raise ValueError("hours cannot be negative")
+    electricity_cost_per_kwh = _require_positive(
+        "electricity_cost_per_kwh", electricity_cost_per_kwh, allow_zero=True
+    )
+    return electricity_power_kw * hours * electricity_cost_per_kwh
+
+
+def calculate_energy_operating_cost(
+    lng_power_kw: float,
+    purchased_electricity_kw: float = 0.0,
+    hours: int = OPERATING_HOURS_PER_YEAR,
+) -> float:
+    return calculate_lng_fuel_cost(lng_power_kw, hours) + calculate_purchased_electricity_cost(
+        purchased_electricity_kw, hours
+    )
+
+
+def calculate_lox_cost(hours: int = OPERATING_HOURS_PER_YEAR) -> float:
+    if hours < 0:
+        raise ValueError("hours cannot be negative")
+    tons_per_hour = LOX_MASS_FLOW_KG_S * 3.6
+    return tons_per_hour * LOX_PRICE_PER_TON_USD * hours
+
+
+def calculate_annual_costs(
+    fci: float,
+    purchased_equipment_cost: float,
+    lng_power_kw: float,
+    purchased_electricity_kw: float = 0.0,
+    hours: int = OPERATING_HOURS_PER_YEAR,
+    include_lox: bool = True,
+) -> dict[str, float]:
+    fci = _require_positive("fci", fci, allow_zero=True)
+    purchased_equipment_cost = _require_positive(
+        "purchased_equipment_cost", purchased_equipment_cost, allow_zero=True
+    )
+    om_basis = fci if O_AND_M_BASIS == "FCI" else purchased_equipment_cost
+    annual_om = calculate_o_and_m_cost(om_basis)
+    annual_energy = calculate_energy_operating_cost(lng_power_kw, purchased_electricity_kw, hours)
+    annual_lox = calculate_lox_cost(hours) if include_lox else 0.0
+    annualized_capital = capital_recovery_factor() * fci
+    tac = annualized_capital + annual_om + annual_energy + annual_lox
+    return {
+        "Annualized Capital Cost": annualized_capital,
+        "Annual O&M Cost": annual_om,
+        "Annual LNG Fuel Cost": calculate_lng_fuel_cost(lng_power_kw, hours),
+        "Annual Purchased Electricity Cost": calculate_purchased_electricity_cost(
+            purchased_electricity_kw, hours
+        ),
+        "Annual Energy Operating Cost": annual_energy,
+        "Annual LOX Cost": annual_lox,
+        "Total Annualized Cost (TAC)": tac,
+    }
+
+###############################################################################
+# PRODUCT REVENUE AND FINANCIAL METRICS
+###############################################################################
+
+def calculate_levelized_cost(
+    tac: float,
+    energy_product_kw: float,
+    hours: int = OPERATING_HOURS_PER_YEAR,
+) -> float:
+    tac = _require_positive("tac", tac, allow_zero=True)
+    energy_product_kw = _require_positive("energy_product_kw", energy_product_kw)
+    if hours <= 0:
+        raise ValueError("hours must be positive")
+    return tac / (energy_product_kw * hours)
+
+
+def calculate_annual_income_components(
+    methanol_mass_kg_s: float,
+    hot_water_energy_kw: float,
+    hours: int = OPERATING_HOURS_PER_YEAR,
+) -> dict[str, float]:
+    """Return annual product-revenue components using the current product prices.
+
+    Methanol revenue equation used in the paper:
+        R_MeOH = m_dot_MeOH[kg/s] * 3.6[t/h per kg/s] * P_MeOH[$/t] * t_op[h/y]
+
+    District-heating/hot-water revenue equation:
+        R_heat = Q_heat[kW] * 0.0036[GJ/h per kW] * P_heat[$/GJ] * t_op[h/y]
+    """
+    methanol_mass_kg_s = _require_positive("methanol_mass_kg_s", methanol_mass_kg_s, allow_zero=True)
+    hot_water_energy_kw = _require_positive("hot_water_energy_kw", hot_water_energy_kw, allow_zero=True)
+    if hours < 0:
+        raise ValueError("hours cannot be negative")
+
+    methanol_tons_per_hour = methanol_mass_kg_s * 3.6
+    methanol_revenue = methanol_tons_per_hour * METHANOL_PRICE_PER_TON_USD * hours
+
+    hot_water_gj_per_hour = hot_water_energy_kw * 0.0036
+    hot_water_revenue = hot_water_gj_per_hour * HOT_WATER_PRICE_PER_GJ * hours
+
+    return {
+        "Methanol Revenue": methanol_revenue,
+        "Hot-Water Revenue": hot_water_revenue,
+        "Annual Income": methanol_revenue + hot_water_revenue,
+    }
+
+
+def calculate_annual_income(
+    methanol_mass_kg_s: float,
+    hot_water_energy_kw: float,
+    hours: int = OPERATING_HOURS_PER_YEAR,
+) -> float:
+    return calculate_annual_income_components(
+        methanol_mass_kg_s=methanol_mass_kg_s,
+        hot_water_energy_kw=hot_water_energy_kw,
+        hours=hours,
+    )["Annual Income"]
+
+
+def get_price_assumptions() -> dict[str, float | str]:
+    """Return the economic price assumptions used by the current calculation."""
+    return {
+        "Methanol price scenario": METHANOL_PRICE_SCENARIO,
+        "Methanol price (EUR/t)": METHANOL_PRICE_PER_TON_EUR,
+        "Methanol price (USD/t)": METHANOL_PRICE_PER_TON_USD,
+        "District heating price (DKK/MWh)": HOT_WATER_PRICE_PER_MWH_DKK,
+        "District heating price (DKK/GJ)": HOT_WATER_PRICE_PER_GJ_DKK,
+        "District heating price (USD/GJ)": HOT_WATER_PRICE_PER_GJ,
+        "EUR to USD": EUR_TO_USD,
+        "DKK per EUR": DKK_PER_EUR,
+        "DKK per USD": DKK_PER_USD,
+        "LOX price (EUR/t, paper input-cost assumption)": LOX_PRICE_PER_TON_EUR,
+        "LOX price (USD/t, FX-updated)": LOX_PRICE_PER_TON_USD,
+        "LNG cost (USD/GJ, paper input-cost assumption)": LNG_COST_PER_GJ,
+        "Current EU TTF gas reference (USD/GJ, not default)": CURRENT_EU_TTF_GAS_COST_USD_PER_GJ,
+    }
+
+
+def calculate_project_npv(
+    fci: float,
+    annual_income: float,
+    annual_om_cost: float,
+    annual_energy_operating_cost: float,
+    annual_lox_cost: float,
+    discount_rate: float = DISCOUNT_RATE,
+    lifetime_years: int = SYSTEM_LIFETIME_YEARS,
+    salvage_value: float = 0.0,
+) -> float:
+    """Discounted cash-flow NPV.
+
+    Year 0: -FCI.
+    Years 1..N: annual income minus non-capital operating costs.
+    """
+    fci = _require_positive("fci", fci, allow_zero=True)
+    annual_income = _require_positive("annual_income", annual_income, allow_zero=True)
+    annual_om_cost = _require_positive("annual_om_cost", annual_om_cost, allow_zero=True)
+    annual_energy_operating_cost = _require_positive(
+        "annual_energy_operating_cost", annual_energy_operating_cost, allow_zero=True
+    )
+    annual_lox_cost = _require_positive("annual_lox_cost", annual_lox_cost, allow_zero=True)
+    salvage_value = _require_positive("salvage_value", salvage_value, allow_zero=True)
+
+    annual_net_cash_flow = (
+        annual_income - annual_om_cost - annual_energy_operating_cost - annual_lox_cost
+    )
+    npv = -fci
+    for year in range(1, lifetime_years + 1):
+        npv += annual_net_cash_flow / ((1.0 + discount_rate) ** year)
+    npv += salvage_value / ((1.0 + discount_rate) ** lifetime_years)
+    return npv
+
+
+def calculate_paper_style_npv(tac: float) -> float:
+    """Manuscript-style NPV metric: TAC divided by CRF.
+
+    This reproduces the paper/supplementary-code convention. It is a present
+    value of the annualized cost stream, not a discounted net cash-flow NPV.
+    """
+    tac = _require_positive("tac", tac, allow_zero=True)
+    return tac / capital_recovery_factor()
+
+
+def calculate_payback_period_paper_equation(
+    total_capital_investment: float,
+    annual_income: float,
+) -> float:
+    """Payback period as written in the paper's economics section.
+
+    Equation:
+        PB = TCI / C_inc
+
+    where TCI is total/fixed capital investment and C_inc is gross annual income
+    from the process products.  This intentionally follows the paper equation
+    and does not subtract annual O&M, LNG, LOX, or electricity costs.
+    """
+    total_capital_investment = _require_positive(
+        "total_capital_investment", total_capital_investment, allow_zero=True
+    )
+    annual_income = _require_positive("annual_income", annual_income, allow_zero=True)
+    return total_capital_investment / annual_income if annual_income > 0 else float("inf")
+
+
+###############################################################################
+# HEAT EXCHANGER SIZING AND PURCHASE COST ASSEMBLY
+###############################################################################
+
+def heat_exchanger_area_m2(
+    q_kw: float,
+    lmtd_c: float,
+    u_kw_per_m2K: float,
+) -> float:
+    q_kw = _require_positive("heat exchanger q_kw", q_kw)
+    lmtd_c = _require_positive("heat exchanger lmtd_c", lmtd_c)
+    u_kw_per_m2K = _require_positive("heat exchanger u_kw_per_m2K", u_kw_per_m2K)
+    return q_kw / (u_kw_per_m2K * lmtd_c)
+
+
+def get_heat_exchanger_design_values(
+    component: str,
+    q_overrides_kw: dict[str, float] | None = None,
+    lmtd_overrides_c: dict[str, float] | None = None,
+    u_overrides_kw_per_m2K: dict[str, float] | None = None,
+) -> tuple[float, float, float, float]:
+    if component not in HEAT_EXCHANGERS.index:
+        raise KeyError(f"Unknown heat exchanger: {component}")
+
+    row = HEAT_EXCHANGERS.loc[component]
+    q_kw = row["Q_kW"]
+    lmtd_c = row["LMTD_C"]
+
+    if component == "E-103":
+        q_kw = E103_INTERNAL_HEAT_RECOVERY_KW_ABS if pd.isna(q_kw) else q_kw
+        lmtd_c = E103_ASSUMED_LMTD_C if pd.isna(lmtd_c) else lmtd_c
+
+    if q_overrides_kw and component in q_overrides_kw:
+        q_kw = q_overrides_kw[component]
+    if lmtd_overrides_c and component in lmtd_overrides_c:
+        lmtd_c = lmtd_overrides_c[component]
+
+    if pd.isna(q_kw) or pd.isna(lmtd_c):
+        raise ValueError(
+            f"Heat exchanger {component} is missing Q or LMTD. "
+            "Provide q_overrides_kw/lmtd_overrides_c or explicit assumptions."
+        )
+
+    u_kw_per_m2K = HEAT_EXCHANGER_U_KW_PER_M2K.get(
+        component, DEFAULT_HEAT_EXCHANGER_U_KW_PER_M2K
+    )
+    if u_overrides_kw_per_m2K and component in u_overrides_kw_per_m2K:
+        u_kw_per_m2K = u_overrides_kw_per_m2K[component]
+
+    area_m2 = heat_exchanger_area_m2(float(q_kw), float(lmtd_c), float(u_kw_per_m2K))
+    return float(q_kw), float(lmtd_c), float(u_kw_per_m2K), area_m2
+
+
+def calculate_equipment_purchase_costs(
+    wind_power_kw: float = BASELINE_WIND_POWER_KW,
+    wind_turbine_rated_power_kw: float | None = None,
+    include_wind_turbine: bool = True,
+    t100_power_kw: float | None = None,
+    methanol_gas_feed_kg_s: float | None = None,
+    rwgs_n_tubes: int = RWGS_BASE_TUBES,
+    rwgs_power_kw: float = RWGS_BASE_POWER_KW,
+    pem_power_kw: float = PEM_ELECTROLYZER_BASE_POWER_KW,
+    heat_exchanger_q_overrides_kw: dict[str, float] | None = None,
+    heat_exchanger_lmtd_overrides_c: dict[str, float] | None = None,
+    heat_exchanger_u_overrides_kw_per_m2K: dict[str, float] | None = None,
+) -> dict[str, float]:
+    purchase_costs: dict[str, float] = {}
+
+    if wind_turbine_rated_power_kw is None:
+        # For the corrected model, default rated wind capacity equals the
+        # reported wind electric power unless the caller supplies a larger
+        # installed/rated value.
+        wind_turbine_rated_power_kw = (
+            BASELINE_WIND_TURBINE_RATED_POWER_KW
+            if math.isclose(wind_power_kw, BASELINE_WIND_POWER_KW, rel_tol=0.0, abs_tol=1e-9)
+            else wind_power_kw
+        )
+
+    for comp, row in PUMPS.iterrows():
+        purchase_costs[comp] = cost_pump(float(row["W_kW"]))
+
+    if t100_power_kw is None:
+        t100_power_kw = float(TURBINES.loc["T-100", "W_kW"])
+    purchase_costs["T-100"] = cost_gas_turbine(t100_power_kw)
+
+    for comp, row in COMPRESSORS.iterrows():
+        purchase_costs[comp] = cost_compressor(float(row["W_kW"]))
+
+    use_fixed_baseline_hx_area = (
+        USE_PAPER_FIXED_BASELINE_EXCHANGER_AREA
+        and heat_exchanger_q_overrides_kw is None
+        and heat_exchanger_lmtd_overrides_c is None
+        and heat_exchanger_u_overrides_kw_per_m2K is None
+    )
+    for comp in HEAT_EXCHANGERS.index:
+        if use_fixed_baseline_hx_area:
+            area_m2 = PAPER_FIXED_HEAT_EXCHANGER_AREA_M2
+        else:
+            _, _, _, area_m2 = get_heat_exchanger_design_values(
+                comp,
+                q_overrides_kw=heat_exchanger_q_overrides_kw,
+                lmtd_overrides_c=heat_exchanger_lmtd_overrides_c,
+                u_overrides_kw_per_m2K=heat_exchanger_u_overrides_kw_per_m2K,
+            )
+        purchase_costs[comp] = cost_exchanger(area_m2)
+
+    if include_wind_turbine:
+        purchase_costs["Wind Turbine"] = cost_wind_turbine(wind_turbine_rated_power_kw / 1_000.0)
+
+    # The combustion-chamber cost correlation requires p_out/p_in < 0.995.
+    # The HYSYS model reports no explicit pressure drop, so a 5% pressure-loss
+    # design value is used only for the cost correlation.
+    purchase_costs["Combustion Chamber"] = cost_combustion_chamber(
+        m_in_kg_s=float(STREAMS.loc[6, "m_kg_s"]),
+        p_in_kPa=30_000.0,
+        p_out_kPa=30_000.0 * 0.95,
+        T_out_C=float(STREAMS.loc[8, "T_C"]),
+    )
+
+    if methanol_gas_feed_kg_s is None:
+        methanol_gas_feed_kg_s = float(STREAMS.loc[49, "m_kg_s"])
+    purchase_costs["Methanol Unit"] = cost_methanol_unit(methanol_gas_feed_kg_s)
+    purchase_costs["RWGS Plasma NTP"] = cost_rwgs_plasma_ntp(
+        n_tubes=rwgs_n_tubes, power_kW=rwgs_power_kw
+    )
+    purchase_costs["PEM Electrolyzer"] = cost_pem_electrolyzer(pem_power_kw)
+    return purchase_costs
+
+###############################################################################
+# SYSTEM ECONOMICS
+###############################################################################
+
+def calculate_system_economics(
+    *,
+    lng_power_kw: float = BASELINE_LNG_POWER_KW,
+    wind_power_kw: float = BASELINE_WIND_POWER_KW,
+    wind_turbine_rated_power_kw: float | None = None,
+    wind_treatment: WindTreatment = "owned",
+    methanol_mass_kg_s: float = BASELINE_METHANOL_MASS_KG_S,
+    methanol_energy_kw: float | None = None,
+    methanol_gas_feed_kg_s: float | None = None,
+    heating_load_kw: float = BASELINE_HEATING_LOAD_KW,
+    t100_power_kw: float | None = None,
+    heat_exchanger_q_overrides_kw: dict[str, float] | None = None,
+    heat_exchanger_lmtd_overrides_c: dict[str, float] | None = None,
+    heat_exchanger_u_overrides_kw_per_m2K: dict[str, float] | None = None,
+    include_lox: bool = True,
+    hours: int = OPERATING_HOURS_PER_YEAR,
+) -> dict[str, Any]:
+    if wind_treatment not in {"owned", "purchased", "free"}:
+        raise ValueError("wind_treatment must be 'owned', 'purchased', or 'free'")
+
+    include_wind_turbine = wind_treatment == "owned" and wind_power_kw > 0
+    purchased_electricity_kw = wind_power_kw if wind_treatment == "purchased" else 0.0
+
+    purchase_costs = calculate_equipment_purchase_costs(
+        wind_power_kw=wind_power_kw,
+        wind_turbine_rated_power_kw=wind_turbine_rated_power_kw,
+        include_wind_turbine=include_wind_turbine,
+        t100_power_kw=t100_power_kw,
+        methanol_gas_feed_kg_s=methanol_gas_feed_kg_s,
+        heat_exchanger_q_overrides_kw=heat_exchanger_q_overrides_kw,
+        heat_exchanger_lmtd_overrides_c=heat_exchanger_lmtd_overrides_c,
+        heat_exchanger_u_overrides_kw_per_m2K=heat_exchanger_u_overrides_kw_per_m2K,
+    )
+    total_purchased_cost = sum(purchase_costs.values())
+    direct_costs, indirect_costs, fci = calculate_fci(total_purchased_cost)
+
+    annual_costs = calculate_annual_costs(
+        fci=fci,
+        purchased_equipment_cost=total_purchased_cost,
+        lng_power_kw=lng_power_kw,
+        purchased_electricity_kw=purchased_electricity_kw,
+        hours=hours,
+        include_lox=include_lox,
+    )
+    tac = annual_costs["Total Annualized Cost (TAC)"]
+
+    if methanol_energy_kw is None:
+        if math.isclose(
+            methanol_mass_kg_s,
+            BASELINE_METHANOL_MASS_KG_S,
+            rel_tol=0.0,
+            abs_tol=1e-9,
+        ):
+            methanol_energy_kw = BASELINE_METHANOL_ENERGY_KW
+        else:
+            methanol_energy_kw = methanol_product_energy_kw_from_mass(methanol_mass_kg_s)
+    total_energy_product_kw = methanol_energy_kw + heating_load_kw
+    total_energy_input_kw = lng_power_kw + wind_power_kw
+    levelized_cost = calculate_levelized_cost(tac, total_energy_product_kw, hours)
+    energy_efficiency = total_energy_product_kw / total_energy_input_kw if total_energy_input_kw > 0 else float("nan")
+
+    revenue_components = calculate_annual_income_components(methanol_mass_kg_s, heating_load_kw, hours)
+    annual_income = revenue_components["Annual Income"]
+    annual_net_operating_cash_flow = (
+        annual_income
+        - annual_costs["Annual O&M Cost"]
+        - annual_costs["Annual Energy Operating Cost"]
+        - annual_costs["Annual LOX Cost"]
+    )
+    annual_equivalent_profit = annual_income - tac
+    paper_style_npv = calculate_paper_style_npv(tac)
+    payback_period = calculate_payback_period_paper_equation(fci, annual_income)
+    npv = calculate_project_npv(
+        fci=fci,
+        annual_income=annual_income,
+        annual_om_cost=annual_costs["Annual O&M Cost"],
+        annual_energy_operating_cost=annual_costs["Annual Energy Operating Cost"],
+        annual_lox_cost=annual_costs["Annual LOX Cost"],
+    )
+
+    return {
+        "Equipment Purchase Costs (USD)": purchase_costs,
+        "Total Purchased Equipment Cost": total_purchased_cost,
+        "Direct Costs": direct_costs,
+        "Indirect Costs": indirect_costs,
+        "Fixed Capital Investment (FCI)": fci,
+        "Capital Recovery Factor": capital_recovery_factor(),
+        **annual_costs,
+        "Levelized Cost ($/kWh)": levelized_cost,
+        "Methanol Revenue": revenue_components["Methanol Revenue"],
+        "Hot-Water Revenue": revenue_components["Hot-Water Revenue"],
+        "Annual Income": annual_income,
+        "Annual Net Operating Cash Flow": annual_net_operating_cash_flow,
+        "Annual Equivalent Profit": annual_equivalent_profit,
+        "Present Value of TAC (TAC/CRF, old paper metric)": paper_style_npv,
+        "Discounted Cash Flow NPV": npv,
+        "Net Present Value (NPV)": npv,
+        "Payback Period (years, paper equation TCI/annual income)": payback_period,
+        "Price Assumptions": get_price_assumptions(),
+        "System Performance": {
+            "LNG Power (kW)": lng_power_kw,
+            "Wind Electric Power to Process (kW)": wind_power_kw,
+            "Wind Turbine Rated Power for CAPEX (kW)": (
+                wind_turbine_rated_power_kw
+                if wind_turbine_rated_power_kw is not None
+                else BASELINE_WIND_TURBINE_RATED_POWER_KW
+                if math.isclose(wind_power_kw, BASELINE_WIND_POWER_KW, rel_tol=0.0, abs_tol=1e-9)
+                else wind_power_kw
+            ),
+            "Wind Treatment": wind_treatment,
+            "Purchased Electricity (kW)": purchased_electricity_kw,
+            "O2 to Allam Combustor, Stream 2 (kg/s)": ACC_OXYGEN_TO_COMBUSTOR_KG_S,
+            "PEM O2 Byproduct, Stream 16 (kg/s)": PEM_OXYGEN_BYPRODUCT_KG_S,
+            "Purchased LOX Flow Rate (kg/s)": LOX_MASS_FLOW_KG_S if include_lox else 0.0,
+            "Methanol Production, Stream 56 (kg/s)": methanol_mass_kg_s,
+            "Methanol Energy (kW, LHV/table basis)": methanol_energy_kw,
+            "Stream-Derived Hot-Water Load, Streams 18->19 (kW)": STREAMS_18_TO_19_HOT_WATER_LOAD_KW,
+            "Heating Power Generation Used for Revenue/LCP (kW)": heating_load_kw,
+            "Internal E-103 Heat Recovery from Streams 22->23 (kW)": E103_INTERNAL_HEAT_RECOVERY_KW_ABS,
+            "Total Energy Product (kW)": total_energy_product_kw,
+            "Total Energy Input (kW)": total_energy_input_kw,
+            "Energy Efficiency (%)": energy_efficiency * 100.0,
+            "Operating Hours/Year": hours,
+        },
+    }
+
+###############################################################################
+# SUBSYSTEM ECONOMICS AND REPORTING
+###############################################################################
+
+ALLAM_COMPONENTS = [
+    "P-100", "P-101", "P-103",
+    "T-100", "K-100",
+    "E-100", "E-101", "E-102", "E-103",
+    "Wind Turbine", "Combustion Chamber",
+]
+ELECTROLYZER_COMPONENTS = ["PEM Electrolyzer", "P-102"]
+METHANOL_COMPONENTS = [
+    "Methanol Unit", "RWGS Plasma NTP",
+    "4-stage compressor 1", "4-stage compressor 2",
+    "E-104", "E-105",
+]
+
+
+def subsystem_purchase_cost(component_list: list[str], purchase_costs: dict[str, float]) -> float:
+    missing = [comp for comp in component_list if comp not in purchase_costs]
+    if missing:
+        raise KeyError(f"Missing purchase-cost keys: {missing}")
+    return sum(purchase_costs[comp] for comp in component_list)
+
+
+def calculate_subsystem_economics(purchase_costs: dict[str, float]) -> dict[str, dict[str, float]]:
+    subsystem_components = {
+        "Allam power unit": ALLAM_COMPONENTS,
+        "PEM electrolyzer": ELECTROLYZER_COMPONENTS,
+        "Methanol plant": METHANOL_COMPONENTS,
+    }
+    data: dict[str, dict[str, float]] = {}
+    for name, components in subsystem_components.items():
+        pec = subsystem_purchase_cost(components, purchase_costs)
+        direct = calculate_direct_costs(pec)
+        indirect = calculate_indirect_costs(pec, direct)
+        tci = direct + indirect
+        om_basis = tci if O_AND_M_BASIS == "FCI" else pec
+        o_and_m = calculate_o_and_m_cost(om_basis)
+        tac_without_fuel = capital_recovery_factor() * tci + o_and_m
+        data[name] = {
+            "PEC": pec,
+            "C_DC": direct,
+            "C_ID": indirect,
+            "C_O&M": o_and_m,
+            "TAC_without_fuel_or_LOX": tac_without_fuel,
+            "TCI": tci,
+        }
+    return data
+
+
+def print_economic_analysis(results: dict[str, Any] | None = None) -> dict[str, Any]:
+    if results is None:
+        results = calculate_system_economics()
+
+    print("=" * 76)
+    print("PROCESS SYSTEM ECONOMIC ANALYSIS")
+    print("=" * 76)
+
+    print("\nEQUIPMENT PURCHASE COSTS")
+    print("-" * 76)
+    for equipment, cost in results["Equipment Purchase Costs (USD)"].items():
+        print(f"{equipment:30s} {format_money(cost):>18s}")
+
+    print("\nCAPITAL INVESTMENT SUMMARY")
+    print("-" * 76)
+    print(f"{'Total Purchased Equipment':35s} {format_money(results['Total Purchased Equipment Cost']):>18s}")
+    print(f"{'Direct Costs':35s} {format_money(results['Direct Costs']):>18s}")
+    print(f"{'Indirect Costs':35s} {format_money(results['Indirect Costs']):>18s}")
+    print(f"{'Fixed Capital Investment':35s} {format_money(results['Fixed Capital Investment (FCI)']):>18s}")
+
+    print("\nANNUAL COSTS")
+    print("-" * 76)
+    print(f"{'Capital Recovery Factor':35s} {results['Capital Recovery Factor']:18.4f}")
+    print(f"{'Annualized Capital Cost':35s} {format_money(results['Annualized Capital Cost']):>18s}")
+    print(f"{'Annual O&M Cost':35s} {format_money(results['Annual O&M Cost']):>18s}")
+    print(f"{'Annual LNG Fuel Cost':35s} {format_money(results['Annual LNG Fuel Cost']):>18s}")
+    print(f"{'Annual Purchased Electricity Cost':35s} {format_money(results['Annual Purchased Electricity Cost']):>18s}")
+    print(f"{'Annual LOX Cost':35s} {format_money(results['Annual LOX Cost']):>18s}")
+    print(f"{'Total Annualized Cost':35s} {format_money(results['Total Annualized Cost (TAC)']):>18s}")
+
+    print("\nECONOMIC METRICS")
+    print("-" * 76)
+    print(f"{'Levelized Cost':35s} ${results['Levelized Cost ($/kWh)']:17.5f}/kWh")
+    print(f"{'Methanol Revenue':35s} {format_money(results['Methanol Revenue']):>18s}")
+    print(f"{'Hot-Water Revenue':35s} {format_money(results['Hot-Water Revenue']):>18s}")
+    print(f"{'Annual Income':35s} {format_money(results['Annual Income']):>18s}")
+    print(f"{'Annual Net Operating Cash Flow':35s} {format_money(results['Annual Net Operating Cash Flow']):>18s}")
+    print(f"{'Annual Equivalent Profit':35s} {format_money(results['Annual Equivalent Profit']):>18s}")
+    print(f"{'PV of TAC (old TAC/CRF metric)':35s} {format_money(results['Present Value of TAC (TAC/CRF, old paper metric)']):>18s}")
+    print(f"{'DCF NPV, net cash-flow basis':35s} {format_money(results['Discounted Cash Flow NPV']):>18s}")
+    print(f"{'Payback Period, paper equation':35s} {format_number(results['Payback Period (years, paper equation TCI/annual income)'], 2):>18s} years")
+
+    print("\nPRICE ASSUMPTIONS")
+    print("-" * 76)
+    for param, value in results["Price Assumptions"].items():
+        if isinstance(value, str):
+            print(f"{param:45s} {value:>18s}")
+        else:
+            print(f"{param:45s} {value:18,.4f}")
+
+    print("\nSYSTEM PERFORMANCE")
+    print("-" * 76)
+    for param, value in results["System Performance"].items():
+        if isinstance(value, str):
+            print(f"{param:35s} {value:>18s}")
+        elif isinstance(value, float):
+            print(f"{param:35s} {value:18,.2f}")
+        else:
+            print(f"{param:35s} {value:18,}")
+
+    purchase_costs = results["Equipment Purchase Costs (USD)"]
+    subsystem_data = calculate_subsystem_economics(purchase_costs)
+    subsystem_pec_total = sum(row["PEC"] for row in subsystem_data.values())
+    subsystem_tci_total = sum(row["TCI"] for row in subsystem_data.values())
+    subsystem_tac_total_no_fuel = sum(row["TAC_without_fuel_or_LOX"] for row in subsystem_data.values())
+    subsystem_total_tac = (
+        subsystem_tac_total_no_fuel
+        + results["Annual Energy Operating Cost"]
+        + results["Annual LOX Cost"]
+    )
+
+    print("\nTABLE 7. COMPONENT COSTS IN THE PROPOSED SYSTEM")
+    print("-" * 76)
+    print(f"{'Component':30s} {'Value ($)':>18s}")
+    for name, row in subsystem_data.items():
+        print(f"{name:30s} {format_money(row['PEC']):>18s}")
+    print(f"{'Total':30s} {format_money(subsystem_pec_total):>18s}")
+
+    print("\nTABLE 8. SUBSYSTEM ECONOMIC ANALYSIS")
+    print("-" * 76)
+    print(
+        f"{'Component':22s} {'C_DC':>12s} {'C_ID':>12s} "
+        f"{'C_O&M':>12s} {'TAC*':>12s} {'TCI':>12s}"
+    )
+    for comp, row in subsystem_data.items():
+        print(
+            f"{comp:22s} "
+            f"{row['C_DC']:12,.0f}"
+            f"{row['C_ID']:12,.0f}"
+            f"{row['C_O&M']:12,.0f}"
+            f"{row['TAC_without_fuel_or_LOX']:12,.0f}"
+            f"{row['TCI']:12,.0f}"
+        )
+    print("* TAC excludes LNG, purchased electricity, and LOX.")
+
+    print("\nTABLE 9. PROPOSED PROCESS ECONOMIC ANALYSIS")
+    print("-" * 76)
+    print(f"{'Total Capital Investment (TCI)':35s} {format_money(subsystem_tci_total):>18s}")
+    print(f"{'Energy Operating Cost':35s} {format_money(results['Annual Energy Operating Cost']):>18s}")
+    print(f"{'LOX Cost':35s} {format_money(results['Annual LOX Cost']):>18s}")
+    print(f"{'Total Annualized Cost (TAC)':35s} {format_money(subsystem_total_tac):>18s}")
+    print(f"{'Levelized Cost':35s} ${results['Levelized Cost ($/kWh)']:17.5f}/kWh")
+    print(f"{'Annual Income':35s} {format_money(results['Annual Income']):>18s}")
+    print(f"{'PV of TAC (old TAC/CRF metric)':35s} {format_money(results['Present Value of TAC (TAC/CRF, old paper metric)']):>18s}")
+    print(f"{'Payback Period, paper equation':35s} {format_number(results['Payback Period (years, paper equation TCI/annual income)'], 2):>18s} years")
+    print("=" * 76)
+    return results
+
+###############################################################################
+# DATA ACCESS FUNCTIONS
+###############################################################################
+
+def get_stream(number: int) -> pd.Series:
+    return STREAMS.loc[number]
+
+
+def get_pump(name: str) -> pd.Series:
+    return PUMPS.loc[name]
+
+
+def get_heat_exchanger(name: str) -> pd.Series:
+    return HEAT_EXCHANGERS.loc[name]
+
+
+def get_turbine(name: str) -> pd.Series:
+    return TURBINES.loc[name]
+
+
+def get_compressor(name: str) -> pd.Series:
+    return COMPRESSORS.loc[name]
+
+
+def summary() -> dict[str, pd.DataFrame]:
+    return {
+        "streams": STREAMS.copy(),
+        "pumps": PUMPS.copy(),
+        "heat_exchangers": HEAT_EXCHANGERS.copy(),
+        "turbines": TURBINES.copy(),
+        "compressors": COMPRESSORS.copy(),
+    }
+
+
+###############################################################################
+# ASPEN PLOT-DATA INPUT SENSITIVITY TABLES
+###############################################################################
+
+# The following arrays are the Aspen sensitivity data read from the supplied
+# plots.  The economics code recalculates LCP from these values; any LCP values
+# visible in the original plots are intentionally NOT used.
+#
+# ACC plot data were read from the E-100/T-100/wind/hot-water plot:
+#   x-axis: ACC inlet temperature, 500-800 °C.
+#   y-axis: duty/power, kW.
+# CO2-to-methanol plot data were read from the wind-power/energy-efficiency and
+# CCE plots:
+#   x-axis: CO2 to methanol unit, 25-150 kmol/h.
+#   y-axes: wind power (kW), energy efficiency (%), and CCE (%).
+
+ACC_INLET_TEMPS_C: list[float] = [
+    500.0, 530.0, 560.0, 590.0, 620.0, 650.0,
+    680.0, 710.0, 740.0, 770.0, 800.0,
+]
+ACC_E100_DUTY_KW: list[float] = [
+    22153.344, 23066.884, 24265.905, 25522.023, 26721.044,
+    27920.065, 29119.086, 30375.204, 31574.225, 32830.343,
+    34029.364,
+]
+ACC_T100_POWER_KW: list[float] = [
+    12789.560, 13075.041, 13360.522, 13588.907, 13817.292,
+    14045.677, 14331.158, 14559.543, 14845.024, 15130.506,
+    15330.343,
+]
+ACC_WIND_ENERGY_INLET_KW: list[float] = [
+    3368.679, 3083.197, 2854.812, 2569.331, 2340.946,
+    2055.465, 1827.080, 1541.599, 1313.214, 1027.732,
+    799.347,
+]
+ACC_HOT_WATER_ENERGY_KW: list[float] = [
+    20982.871, 20725.938, 20497.553, 20212.072, 19983.687,
+    19698.206, 19469.821, 19184.339, 18955.954, 18670.473,
+    18442.088,
+]
+
+# Energy/exergy points are included as Aspen plot-data indicators only.  They are
+# not used in the LCP calculation.  Exergy is not recomputed here because the
+# complete component-exergy state table was not supplied for the sensitivity runs.
+ACC_ENERGY_EFFICIENCY_PCT_ASPEN: list[float] = [
+    80.75, 80.72, 80.71, 80.68, 80.65, 80.62,
+    80.58, 80.55, 80.51, 80.47, 80.43,
+]
+ACC_EXERGY_EFFICIENCY_PCT_ASPEN: list[float] = [
+    30.20, 30.18, 30.17, 30.16, 30.15, 30.13,
+    30.12, 30.10, 30.09, 30.08, 30.07,
+]
+
+CO2_TO_METHANOL_KMOL_H: list[float] = [
+    25, 30, 35, 40, 45, 50, 55, 60, 65, 70, 75, 80, 85,
+    90, 95, 100, 105, 110, 115, 120, 125, 130, 135, 140,
+    145, 150,
+]
+CO2_METHANOL_KG_S: list[float] = [
+    0.211010, 0.256710483, 0.305369256, 0.319712197,
+    0.256228833, 0.235784783, 0.229046183, 0.222786097,
+    0.216581972, 0.210390861, 0.204201742, 0.198011261,
+    0.192089519, 0.185396808, 0.179300397, 0.173072617,
+    0.167006858, 0.161003864, 0.154263319, 0.148253372,
+    0.144333544, 0.143561692, 0.143996172, 0.143158864,
+    0.143115897, 0.142894889,
+]
+CO2_WIND_POWER_REQUIRED_KW: list[float] = [
+    2836.418, 2864.450, 2892.728, 2921.224, 2956.472,
+    2993.853, 3029.410, 3065.312, 3101.354, 3137.477,
+    3173.642, 3209.835, 3246.053, 3282.286, 3318.533,
+    3354.786, 3391.050, 3427.323, 3463.605, 3499.892,
+    3530.407, 3550.274, 3570.210, 3590.216, 3610.281,
+    3630.404,
+]
+CO2_ENERGY_EFFICIENCY_PCT_ASPEN: list[float] = [
+    77.66591, 81.69955, 75.52197, 75.23010, 72.20573,
+    71.79150, 71.40972, 71.02448, 70.63976, 70.25055,
+    69.85833, 69.46318, 69.07069, 68.65283, 68.25209,
+    67.87744, 67.45548, 67.06617, 66.64530, 66.25221,
+    65.98037, 65.90698, 65.88431, 65.80661, 65.75814,
+    65.71177,
+]
+CO2_EXERGY_EFFICIENCY_PCT_ASPEN: list[float] = [
+    29.49894, 29.21709, 29.57683, 29.55901, 29.72414,
+    29.70460, 29.68290, 29.66192, 29.64167, 29.62239,
+    29.60391, 29.58607, 29.56928, 29.55300, 29.53698,
+    29.51973, 29.50371, 29.48736, 29.47224, 29.45613,
+    29.43876, 29.41993, 29.39846, 29.37989, 29.36005,
+    29.33942,
+]
+CO2_CCE_PCT_ASPEN: list[float] = [
+    99.8092, 99.8028, 99.8092, 99.8092, 99.8410,
+    99.8060, 99.7074, 99.5929, 99.4656, 99.3193,
+    99.2335, 99.0458, 99.0458, 98.8327, 98.8359,
+    98.5878, 98.5878, 98.5560, 98.2443, 98.2316,
+    98.2316, 97.8308, 97.7863, 97.4109, 97.3919,
+    97.0038,
+]
+
+
+def _validate_same_length(name: str, **series: list[float]) -> None:
+    lengths = {key: len(value) for key, value in series.items()}
+    if len(set(lengths.values())) != 1:
+        raise ValueError(f"{name} series lengths differ: {lengths}")
+
+
+_validate_same_length(
+    "ACC sensitivity",
+    temp=ACC_INLET_TEMPS_C,
+    e100=ACC_E100_DUTY_KW,
+    t100=ACC_T100_POWER_KW,
+    wind=ACC_WIND_ENERGY_INLET_KW,
+    heat=ACC_HOT_WATER_ENERGY_KW,
+    eta=ACC_ENERGY_EFFICIENCY_PCT_ASPEN,
+    exergy=ACC_EXERGY_EFFICIENCY_PCT_ASPEN,
+)
+_validate_same_length(
+    "CO2 sensitivity",
+    co2=CO2_TO_METHANOL_KMOL_H,
+    methanol=CO2_METHANOL_KG_S,
+    wind=CO2_WIND_POWER_REQUIRED_KW,
+    eta=CO2_ENERGY_EFFICIENCY_PCT_ASPEN,
+    exergy=CO2_EXERGY_EFFICIENCY_PCT_ASPEN,
+    cce=CO2_CCE_PCT_ASPEN,
+)
+
+
+def get_acc_aspen_input_data() -> pd.DataFrame:
+    """Return Aspen ACC sensitivity input data read from the supplied plots."""
+    return pd.DataFrame(
+        {
+            "ACC_Temp_C": ACC_INLET_TEMPS_C,
+            "E100_Duty_kW": ACC_E100_DUTY_KW,
+            "T100_Power_kW": ACC_T100_POWER_KW,
+            "Wind_Energy_Inlet_kW": ACC_WIND_ENERGY_INLET_KW,
+            "Hot_Water_Energy_kW": ACC_HOT_WATER_ENERGY_KW,
+            "Corrected_Hot_Water_Energy_for_LCP_kW": [SENSITIVITY_DISTRICT_HEATING_KW] * len(ACC_INLET_TEMPS_C),
+            "Corrected_Methanol_Energy_for_LCP_kW": [BASELINE_METHANOL_ENERGY_KW] * len(ACC_INLET_TEMPS_C),
+            "Energy_Efficiency_Aspen_pct": ACC_ENERGY_EFFICIENCY_PCT_ASPEN,
+            "Exergy_Efficiency_Aspen_pct": ACC_EXERGY_EFFICIENCY_PCT_ASPEN,
+        }
+    )
+
+
+def get_co2_aspen_input_data() -> pd.DataFrame:
+    """Return Aspen CO2-to-methanol sensitivity input data read from plots."""
+    return pd.DataFrame(
+        {
+            "CO2_to_Methanol_Unit_kmol_h": CO2_TO_METHANOL_KMOL_H,
+            "Methanol_Production_kg_s": CO2_METHANOL_KG_S,
+            "Corrected_Methanol_Energy_for_LCP_kW": [
+                methanol_product_energy_kw_from_mass(m) for m in CO2_METHANOL_KG_S
+            ],
+            "Corrected_Hot_Water_Energy_for_LCP_kW": [SENSITIVITY_DISTRICT_HEATING_KW] * len(CO2_TO_METHANOL_KMOL_H),
+            "Wind_Power_Required_kW": CO2_WIND_POWER_REQUIRED_KW,
+            "Energy_Efficiency_Aspen_pct": CO2_ENERGY_EFFICIENCY_PCT_ASPEN,
+            "Exergy_Efficiency_Aspen_pct": CO2_EXERGY_EFFICIENCY_PCT_ASPEN,
+            "CCE_Aspen_pct": CO2_CCE_PCT_ASPEN,
+        }
+    )
+
+
+###############################################################################
+# SENSITIVITY LCP RECALCULATION
+###############################################################################
+
+
+def stoichiometric_methanol_kg_s_from_co2(co2_kmol_h: float) -> float:
+    return float(co2_kmol_h) * MW_METHANOL_KG_PER_KMOL / 3600.0
+
+
+def stoichiometric_gas_feed_kg_s_from_co2(co2_kmol_h: float) -> float:
+    # CO2 + 3H2 -> CH3OH + H2O.  This is used only as a scaling basis for the
+    # methanol unit purchase-cost correlation when Aspen gas-feed flow is not
+    # available at each sensitivity point.
+    return float(co2_kmol_h) * (MW_CO2_KG_PER_KMOL + 3.0 * MW_H2_KG_PER_KMOL) / 3600.0
+
+
+def run_acc_lcp_sensitivity(
+    *,
+    wind_treatment: WindTreatment = "owned",
+    output_dir: str | Path = ".",
+    save_outputs: bool = True,
+    make_plots: bool = True,
+    show_plots: bool = False,
+) -> pd.DataFrame:
+    """Recalculate LCP for the ACC inlet-temperature Aspen sensitivity."""
+    input_df = get_acc_aspen_input_data()
+    rows: list[dict[str, float | str]] = []
+
+    for _, r in input_df.iterrows():
+        acc_temp = float(r["ACC_Temp_C"])
+        e100_duty_kw = float(r["E100_Duty_kW"])
+        t100_power_kw = float(r["T100_Power_kW"])
+        wind_kw = float(r["Wind_Energy_Inlet_kW"])
+        aspen_hot_water_kw = float(r["Hot_Water_Energy_kW"])
+        hot_water_kw = SENSITIVITY_DISTRICT_HEATING_KW
+        methanol_energy_kw = BASELINE_METHANOL_ENERGY_KW
+
+        economics = calculate_system_economics(
+            wind_power_kw=wind_kw,
+            wind_treatment=wind_treatment,
+            methanol_mass_kg_s=BASELINE_METHANOL_MASS_KG_S,
+            methanol_energy_kw=methanol_energy_kw,
+            heating_load_kw=hot_water_kw,
+            t100_power_kw=t100_power_kw,
+            heat_exchanger_q_overrides_kw={"E-100": e100_duty_kw},
+        )
+
+        total_energy_product_kw = float(economics["System Performance"]["Total Energy Product (kW)"])
+        total_energy_input_kw = BASELINE_LNG_POWER_KW + wind_kw
+        calculated_energy_eff_pct = 100.0 * total_energy_product_kw / total_energy_input_kw
+
+        rows.append(
+            {
+                "ACC_Temp_C": acc_temp,
+                "E100_Duty_kW": e100_duty_kw,
+                "T100_Power_kW": t100_power_kw,
+                "Wind_Energy_Inlet_kW": wind_kw,
+                "Hot_Water_Energy_Aspen_kW": aspen_hot_water_kw,
+                "Hot_Water_Energy_Used_for_LCP_kW": hot_water_kw,
+                "Hot_Water_Energy_kW": hot_water_kw,
+                "Methanol_Energy_Used_for_LCP_kW": methanol_energy_kw,
+                "Methanol_Energy_kW": methanol_energy_kw,
+                "Product_Basis": SENSITIVITY_PRODUCT_BASIS_DESCRIPTION,
+                "Total_Energy_Product_kW": total_energy_product_kw,
+                "Total_Energy_Input_kW": total_energy_input_kw,
+                "Energy_Efficiency_Code_pct": calculated_energy_eff_pct,
+                "Energy_Efficiency_Aspen_pct": float(r["Energy_Efficiency_Aspen_pct"]),
+                "Exergy_Efficiency_Aspen_pct": float(r["Exergy_Efficiency_Aspen_pct"]),
+                "Total_Purchased_Equipment_Cost_USD": float(economics["Total Purchased Equipment Cost"]),
+                "FCI_USD": float(economics["Fixed Capital Investment (FCI)"]),
+                "Annualized_Capital_Cost_USD": float(economics["Annualized Capital Cost"]),
+                "Annual_OM_Cost_USD": float(economics["Annual O&M Cost"]),
+                "Annual_LNG_Fuel_Cost_USD": float(economics["Annual LNG Fuel Cost"]),
+                "Annual_Purchased_Electricity_Cost_USD": float(economics["Annual Purchased Electricity Cost"]),
+                "Annual_LOX_Cost_USD": float(economics["Annual LOX Cost"]),
+                "TAC_USD_per_year": float(economics["Total Annualized Cost (TAC)"]),
+                "LCP_USD_per_kWh": float(economics["Levelized Cost ($/kWh)"]),
+                "Annual_Income_USD": float(economics["Annual Income"]),
+                "Payback_Period_years_paper_equation": float(economics["Payback Period (years, paper equation TCI/annual income)"]),
+                "Wind_Treatment": wind_treatment,
+            }
+        )
+
+    results_df = pd.DataFrame(rows)
+    output_path = Path(output_dir)
+    output_path.mkdir(parents=True, exist_ok=True)
+
+    if save_outputs:
+        results_df.to_csv(output_path / "acc_lcp_recalculated.csv", index=False)
+    if make_plots:
+        plot_acc_input_data(input_df, output_path / "acc_aspen_input_data.png", show_plot=show_plots)
+        plot_acc_lcp_results(results_df, output_path / "acc_lcp_recalculated.png", show_plot=show_plots)
+    return results_df
+
+
+def run_co2_lcp_sensitivity(
+    *,
+    wind_treatment: WindTreatment = "owned",
+    output_dir: str | Path = ".",
+    save_outputs: bool = True,
+    make_plots: bool = True,
+    show_plots: bool = False,
+) -> pd.DataFrame:
+    """Recalculate LCP for the CO2-to-methanol Aspen sensitivity."""
+    input_df = get_co2_aspen_input_data()
+    rows: list[dict[str, float | str]] = []
+
+    for _, r in input_df.iterrows():
+        co2_kmol_h = float(r["CO2_to_Methanol_Unit_kmol_h"])
+        methanol_kg_s = float(r["Methanol_Production_kg_s"])
+        wind_kw = float(r["Wind_Power_Required_kW"])
+        energy_eff_frac = float(r["Energy_Efficiency_Aspen_pct"]) / 100.0
+        methanol_energy_kw = methanol_product_energy_kw_from_mass(methanol_kg_s)
+        total_input_kw = BASELINE_LNG_POWER_KW + wind_kw
+        # Diagnostic only: this is the old hot-water value implied by the Aspen
+        # energy-efficiency plot.  It is not used in the corrected LCP because
+        # the paper/system correction fixes the marketable district-heating
+        # product at 5,387 kW.
+        hot_water_kw_inferred_from_aspen = energy_eff_frac * total_input_kw - methanol_energy_kw
+        hot_water_kw = SENSITIVITY_DISTRICT_HEATING_KW
+
+        gas_feed_kg_s = stoichiometric_gas_feed_kg_s_from_co2(co2_kmol_h)
+        theoretical_methanol_kg_s = stoichiometric_methanol_kg_s_from_co2(co2_kmol_h)
+
+        economics = calculate_system_economics(
+            wind_power_kw=wind_kw,
+            wind_treatment=wind_treatment,
+            methanol_mass_kg_s=methanol_kg_s,
+            methanol_energy_kw=methanol_energy_kw,
+            methanol_gas_feed_kg_s=gas_feed_kg_s,
+            heating_load_kw=hot_water_kw,
+        )
+
+        rows.append(
+            {
+                "CO2_to_Methanol_Unit_kmol_h": co2_kmol_h,
+                "Methanol_Production_kg_s": methanol_kg_s,
+                "Methanol_Production_ton_h": methanol_kg_s * 3.6,
+                "Theoretical_Methanol_kg_s_from_CO2": theoretical_methanol_kg_s,
+                "CO2_to_Methanol_Yield_pct_of_stoich": 100.0 * methanol_kg_s / theoretical_methanol_kg_s,
+                "Wind_Power_Required_kW": wind_kw,
+                "LNG_Power_kW": BASELINE_LNG_POWER_KW,
+                "Total_Input_Power_kW": total_input_kw,
+                "Methanol_Energy_Used_for_LCP_kW": methanol_energy_kw,
+                "Methanol_Energy_kW": methanol_energy_kw,
+                "Hot_Water_Energy_Inferred_From_Aspen_kW": hot_water_kw_inferred_from_aspen,
+                "Hot_Water_Energy_Used_for_LCP_kW": hot_water_kw,
+                "Hot_Water_Energy_Inferred_kW": hot_water_kw,
+                "Product_Basis": SENSITIVITY_PRODUCT_BASIS_DESCRIPTION,
+                "Total_Energy_Product_kW": methanol_energy_kw + hot_water_kw,
+                "Energy_Efficiency_Aspen_pct": float(r["Energy_Efficiency_Aspen_pct"]),
+                "Energy_Efficiency_Code_pct": 100.0 * (methanol_energy_kw + hot_water_kw) / total_input_kw,
+                "Energy_Efficiency_Code_Check_pct": 100.0 * (methanol_energy_kw + hot_water_kw) / total_input_kw,
+                "Exergy_Efficiency_Aspen_pct": float(r["Exergy_Efficiency_Aspen_pct"]),
+                "CCE_Aspen_pct": float(r["CCE_Aspen_pct"]),
+                "Methanol_Unit_Gas_Feed_Scaling_kg_s": gas_feed_kg_s,
+                "Total_Purchased_Equipment_Cost_USD": float(economics["Total Purchased Equipment Cost"]),
+                "FCI_USD": float(economics["Fixed Capital Investment (FCI)"]),
+                "Annualized_Capital_Cost_USD": float(economics["Annualized Capital Cost"]),
+                "Annual_OM_Cost_USD": float(economics["Annual O&M Cost"]),
+                "Annual_LNG_Fuel_Cost_USD": float(economics["Annual LNG Fuel Cost"]),
+                "Annual_Purchased_Electricity_Cost_USD": float(economics["Annual Purchased Electricity Cost"]),
+                "Annual_LOX_Cost_USD": float(economics["Annual LOX Cost"]),
+                "TAC_USD_per_year": float(economics["Total Annualized Cost (TAC)"]),
+                "LCP_USD_per_kWh": float(economics["Levelized Cost ($/kWh)"]),
+                "Annual_Income_USD": float(economics["Annual Income"]),
+                "Payback_Period_years_paper_equation": float(economics["Payback Period (years, paper equation TCI/annual income)"]),
+                "Wind_Treatment": wind_treatment,
+            }
+        )
+
+    results_df = pd.DataFrame(rows)
+    output_path = Path(output_dir)
+    output_path.mkdir(parents=True, exist_ok=True)
+
+    if save_outputs:
+        results_df.to_csv(output_path / "co2_lcp_recalculated.csv", index=False)
+    if make_plots:
+        plot_co2_wind_efficiency_input(input_df, output_path / "co2_aspen_wind_efficiency_input.png", show_plot=show_plots)
+        plot_co2_lcp_cce_results(results_df, output_path / "co2_lcp_cce_recalculated.png", show_plot=show_plots)
+    return results_df
+
+
+###############################################################################
+# PLOTTING AND EXCEL OUTPUTS
+###############################################################################
+
+
+def _polyfit_confidence_band(
+    x: pd.Series | np.ndarray,
+    y: pd.Series | np.ndarray,
+    *,
+    degree: int = 3,
+    n_grid: int = 200,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    """Return x_grid, y_fit, lower_95, upper_95 for a polynomial OLS fit."""
+    x_arr = np.asarray(x, dtype=float)
+    y_arr = np.asarray(y, dtype=float)
+    x_grid = np.linspace(float(np.min(x_arr)), float(np.max(x_arr)), n_grid)
+
+    # Scale x for numerical stability.
+    x_mean = float(np.mean(x_arr))
+    x_std = float(np.std(x_arr)) or 1.0
+    z = (x_arr - x_mean) / x_std
+    z_grid = (x_grid - x_mean) / x_std
+
+    X = np.vander(z, N=degree + 1, increasing=True)
+    Xg = np.vander(z_grid, N=degree + 1, increasing=True)
+    beta, *_ = np.linalg.lstsq(X, y_arr, rcond=None)
+    y_fit = Xg @ beta
+
+    residuals = y_arr - X @ beta
+    dof = max(len(x_arr) - X.shape[1], 1)
+    s2 = float(np.sum(residuals**2) / dof)
+    xtx_inv = np.linalg.pinv(X.T @ X)
+    pred_var = np.sum((Xg @ xtx_inv) * Xg, axis=1) * s2
+    band = 1.96 * np.sqrt(np.maximum(pred_var, 0.0))
+    return x_grid, y_fit, y_fit - band, y_fit + band
+
+
+def plot_acc_input_data(
+    input_df: pd.DataFrame,
+    output_file: str | Path,
+    *,
+    show_plot: bool = False,
+) -> None:
+    fig, ax = plt.subplots(figsize=(10.5, 7.0))
+    ax.plot(input_df["ACC_Temp_C"], input_df["E100_Duty_kW"], marker="o", linewidth=2.0, color="#00CC96", label="E-100 Duty")
+    ax.plot(input_df["ACC_Temp_C"], input_df["T100_Power_kW"], marker="s", linewidth=2.0, color="#555555", label="T-100 Power")
+    ax.plot(input_df["ACC_Temp_C"], input_df["Wind_Energy_Inlet_kW"], marker="^", linewidth=2.0, color="#FF3B30", label="Wind Energy Inlet")
+    hot_water_plot_col = (
+        "Corrected_Hot_Water_Energy_for_LCP_kW"
+        if "Corrected_Hot_Water_Energy_for_LCP_kW" in input_df.columns
+        else "Hot_Water_Energy_kW"
+    )
+    ax.plot(
+        input_df["ACC_Temp_C"],
+        input_df[hot_water_plot_col],
+        marker="x",
+        linewidth=2.0,
+        color="#1E73FF",
+        label="Hot Water Energy Used for LCP",
+    )
+    ax.set_xlabel("ACC Inlet Temperature (°C)", fontsize=13, fontweight="bold")
+    ax.set_ylabel("Duty/Power (kW)", fontsize=13, fontweight="bold")
+    ax.grid(True, linestyle=":", alpha=0.45)
+    ax.legend(loc="best", fontsize=11)
+    fig.tight_layout()
+    fig.savefig(output_file, dpi=300, bbox_inches="tight")
+    if show_plot:
+        plt.show()
+    plt.close(fig)
+
+
+def plot_acc_lcp_results(
+    results_df: pd.DataFrame,
+    output_file: str | Path,
+    *,
+    show_plot: bool = False,
+) -> None:
+    fig, ax_l = plt.subplots(figsize=(10.5, 7.0))
+    ax_l.plot(results_df["ACC_Temp_C"], results_df["LCP_USD_per_kWh"], marker="^", linewidth=2.4, color="#0000FF", label="Calculated LCP")
+    ax_l.set_xlabel("ACC Inlet Temperature (°C)", fontsize=13, fontweight="bold")
+    ax_l.set_ylabel("LCP ($/kWh)", fontsize=13, fontweight="bold")
+    ax_l.grid(True, linestyle=":", alpha=0.45)
+
+    ax_r = ax_l.twinx()
+    ax_r.plot(results_df["ACC_Temp_C"], results_df["Energy_Efficiency_Aspen_pct"], marker="o", linewidth=2.1, color="#00CC96", label="Aspen Energy Efficiency")
+    ax_r.plot(results_df["ACC_Temp_C"], results_df["Exergy_Efficiency_Aspen_pct"], marker="*", linewidth=1.8, color="#00AA7A", label="Aspen Exergy Efficiency")
+    ax_r.set_ylabel("Efficiency (%)", fontsize=13, fontweight="bold")
+
+    lines_l, labels_l = ax_l.get_legend_handles_labels()
+    lines_r, labels_r = ax_r.get_legend_handles_labels()
+    ax_l.legend(lines_l + lines_r, labels_l + labels_r, loc="best", fontsize=11)
+    fig.tight_layout()
+    fig.savefig(output_file, dpi=300, bbox_inches="tight")
+    if show_plot:
+        plt.show()
+    plt.close(fig)
+
+
+def plot_co2_wind_efficiency_input(
+    input_df: pd.DataFrame,
+    output_file: str | Path,
+    *,
+    show_plot: bool = False,
+) -> None:
+    fig, ax_l = plt.subplots(figsize=(10.5, 7.0))
+    x = input_df["CO2_to_Methanol_Unit_kmol_h"]
+    ax_l.plot(x, input_df["Wind_Power_Required_kW"], marker="^", linewidth=2.4, color="#0000FF", label="Wind Power")
+    ax_l.set_xlabel("CO$_2$ to Methanol Unit (kmol/h)", fontsize=13, fontweight="bold")
+    ax_l.set_ylabel("Wind Power Required (kW)", fontsize=13, fontweight="bold")
+    ax_l.grid(True, linestyle=":", alpha=0.45)
+
+    ax_r = ax_l.twinx()
+    ax_r.plot(x, input_df["Energy_Efficiency_Aspen_pct"], marker="o", linewidth=2.2, color="#008000", label="Aspen Energy Efficiency")
+    xf, yf, yl, yu = _polyfit_confidence_band(x, input_df["Energy_Efficiency_Aspen_pct"], degree=4)
+    ax_r.plot(xf, yf, linestyle="--", linewidth=1.6, color="#222222", label="Fitted Energy Efficiency")
+    ax_r.fill_between(xf, yl, yu, color="#FFFF99", alpha=0.55, label="95% Confidence Band")
+    ax_r.set_ylabel("Energy Efficiency (%)", fontsize=13, fontweight="bold")
+
+    lines_l, labels_l = ax_l.get_legend_handles_labels()
+    lines_r, labels_r = ax_r.get_legend_handles_labels()
+    ax_l.legend(lines_l + lines_r, labels_l + labels_r, loc="best", fontsize=10)
+    fig.tight_layout()
+    fig.savefig(output_file, dpi=300, bbox_inches="tight")
+    if show_plot:
+        plt.show()
+    plt.close(fig)
+
+
+def plot_co2_lcp_cce_results(
+    results_df: pd.DataFrame,
+    output_file: str | Path,
+    *,
+    show_plot: bool = False,
+) -> None:
+    fig, ax_l = plt.subplots(figsize=(10.5, 7.0))
+    x = results_df["CO2_to_Methanol_Unit_kmol_h"]
+    ax_l.plot(x, results_df["CCE_Aspen_pct"], marker="^", linewidth=2.3, color="#0000FF", label="Aspen CCE")
+    xf, yf, yl, yu = _polyfit_confidence_band(x, results_df["CCE_Aspen_pct"], degree=4)
+    ax_l.plot(xf, yf, linestyle="--", linewidth=1.6, color="#222222", label="Fitted CCE")
+    ax_l.fill_between(xf, yl, yu, color="#FFFF99", alpha=0.55, label="95% Confidence Band of CCE")
+    ax_l.set_xlabel("CO$_2$ to Methanol Unit (kmol/h)", fontsize=13, fontweight="bold")
+    ax_l.set_ylabel("CCE (%)", fontsize=13, fontweight="bold")
+    ax_l.grid(True, linestyle=":", alpha=0.45)
+
+    ax_r = ax_l.twinx()
+    ax_r.plot(x, results_df["LCP_USD_per_kWh"], marker="o", linewidth=2.2, color="#00CC96", label="Calculated LCP")
+    ax_r.set_ylabel("LCP ($/kWh)", fontsize=13, fontweight="bold")
+
+    lines_l, labels_l = ax_l.get_legend_handles_labels()
+    lines_r, labels_r = ax_r.get_legend_handles_labels()
+    ax_l.legend(lines_l + lines_r, labels_l + labels_r, loc="best", fontsize=10)
+    fig.tight_layout()
+    fig.savefig(output_file, dpi=300, bbox_inches="tight")
+    if show_plot:
+        plt.show()
+    plt.close(fig)
+
+
+def write_sensitivity_excel(
+    *,
+    baseline_results: dict[str, Any],
+    acc_results: pd.DataFrame,
+    co2_results: pd.DataFrame,
+    output_file: str | Path,
+) -> None:
+    """Write Aspen inputs and recalculated LCP results to one Excel file."""
+    baseline_rows = []
+    for key, value in baseline_results.items():
+        if isinstance(value, dict):
+            continue
+        baseline_rows.append({"Metric": key, "Value": value})
+    baseline_df = pd.DataFrame(baseline_rows)
+
+    perf_df = pd.DataFrame(
+        [{"Metric": k, "Value": v} for k, v in baseline_results["System Performance"].items()]
+    )
+    refs_df = pd.DataFrame(
+        [
+            {"Input": name, **details}
+            for name, details in PRICE_REFERENCES.items()
+        ]
+    )
+
+    with pd.ExcelWriter(output_file) as writer:
+        baseline_df.to_excel(writer, sheet_name="Baseline_Economics", index=False)
+        perf_df.to_excel(writer, sheet_name="Baseline_Performance", index=False)
+        get_acc_aspen_input_data().to_excel(writer, sheet_name="ACC_Aspen_Input", index=False)
+        acc_results.to_excel(writer, sheet_name="ACC_LCP_Calculated", index=False)
+        get_co2_aspen_input_data().to_excel(writer, sheet_name="CO2_Aspen_Input", index=False)
+        co2_results.to_excel(writer, sheet_name="CO2_LCP_Calculated", index=False)
+        refs_df.to_excel(writer, sheet_name="Price_References", index=False)
+
+
+###############################################################################
+# MAIN ENTRY POINT
+###############################################################################
+
+
+def run_all_sensitivity_outputs(
+    *,
+    wind_treatment: WindTreatment = "owned",
+    output_dir: str | Path = "results",
+    make_plots: bool = True,
+    show_plots: bool = False,
+) -> tuple[pd.DataFrame, pd.DataFrame, dict[str, Any]]:
+    output_path = Path(output_dir)
+    output_path.mkdir(parents=True, exist_ok=True)
+
+    baseline = calculate_system_economics(wind_treatment=wind_treatment)
+    acc_results = run_acc_lcp_sensitivity(
+        wind_treatment=wind_treatment,
+        output_dir=output_path,
+        save_outputs=True,
+        make_plots=make_plots,
+        show_plots=show_plots,
+    )
+    co2_results = run_co2_lcp_sensitivity(
+        wind_treatment=wind_treatment,
+        output_dir=output_path,
+        save_outputs=True,
+        make_plots=make_plots,
+        show_plots=show_plots,
+    )
+    write_sensitivity_excel(
+        baseline_results=baseline,
+        acc_results=acc_results,
+        co2_results=co2_results,
+        output_file=output_path / "sensitivity_lcp_recalculated.xlsx",
+    )
+    return acc_results, co2_results, baseline
+
+
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(
+        description="Recalculate LCP with corrected district-heating and methanol product-energy values."
+    )
+    parser.add_argument(
+        "--wind-treatment",
+        choices=["owned", "purchased", "free"],
+        default="owned",
+        help="How wind power is treated in the economics. Default: owned.",
+    )
+    parser.add_argument(
+        "--output-dir",
+        default="results",
+        help="Directory where CSV, Excel, and plot outputs are written.",
+    )
+    parser.add_argument("--no-plots", action="store_true", help="Do not generate PNG plots.")
+    parser.add_argument("--show-plots", action="store_true", help="Show plots interactively after saving.")
+    # parse_known_args keeps the script safe in Colab/Jupyter, which injects
+    # arguments such as -f kernel.json.
+    args, _unknown = parser.parse_known_args()
+    return args
+
+
+def main() -> None:
+    args = parse_args()
+    output_path = Path(args.output_dir)
+    output_path.mkdir(parents=True, exist_ok=True)
+
+    baseline = print_economic_analysis(calculate_system_economics(wind_treatment=args.wind_treatment))
+    acc_results, co2_results, _ = run_all_sensitivity_outputs(
+        wind_treatment=args.wind_treatment,
+        output_dir=output_path,
+        make_plots=not args.no_plots,
+        show_plots=args.show_plots,
+    )
+
+    print("\nSensitivity outputs written to:")
+    print(f"  {output_path / 'acc_lcp_recalculated.csv'}")
+    print(f"  {output_path / 'co2_lcp_recalculated.csv'}")
+    print(f"  {output_path / 'sensitivity_lcp_recalculated.xlsx'}")
+    if not args.no_plots:
+        print(f"  {output_path / 'acc_aspen_input_data.png'}")
+        print(f"  {output_path / 'acc_lcp_recalculated.png'}")
+        print(f"  {output_path / 'co2_aspen_wind_efficiency_input.png'}")
+        print(f"  {output_path / 'co2_lcp_cce_recalculated.png'}")
+
+    print("\nACC LCP range:")
+    print(
+        f"  {acc_results['LCP_USD_per_kWh'].min():.5f} - "
+        f"{acc_results['LCP_USD_per_kWh'].max():.5f} $/kWh"
+    )
+    print("CO2-to-methanol LCP range:")
+    print(
+        f"  {co2_results['LCP_USD_per_kWh'].min():.5f} - "
+        f"{co2_results['LCP_USD_per_kWh'].max():.5f} $/kWh"
+    )
+
+
+if __name__ == "__main__":
+    main()
+
+
